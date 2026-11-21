@@ -1,0 +1,42 @@
+result=success run=17 sha=70ae1eef3dcdca14515a9693528613240f4c5254
+----
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug
+> Task :app:parseDebugLocalResources
+> Task :app:processDebugMainManifest
+> Task :app:processDebugManifest
+> Task :app:mergeDebugShaders
+> Task :app:compileDebugShaders NO-SOURCE
+> Task :app:generateDebugAssets UP-TO-DATE
+> Task :app:mergeDebugAssets
+> Task :app:processDebugManifestForPackage
+> Task :app:compressDebugAssets
+> Task :app:desugarDebugFileDependencies
+> Task :app:processDebugJavaRes NO-SOURCE
+> Task :app:mergeDebugStartupProfile
+> Task :app:mergeDebugJniLibFolders
+> Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugNativeLibs NO-SOURCE
+> Task :app:mergeLibDexDebug
+> Task :app:stripDebugDebugSymbols NO-SOURCE
+> Task :app:processDebugResources
+> Task :app:validateSigningDebug
+> Task :app:mergeDebugJavaResource
+> Task :app:mergeExtDexDebug
+
+> Task :app:compileDebugJavaWithJavac
+Note: /home/runner/work/watchlater-plus/watchlater-plus/app/src/main/java/com/jpsums/watchlater/BubbleService.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :app:dexBuilderDebug
+> Task :app:mergeDebugGlobalSynthetics
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
+> Task :app:mergeProjectDexDebug
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect
+> Task :app:assembleDebug
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/__run_2-1795269041264.json
+
+BUILD SUCCESSFUL in 16s
+33 actionable tasks: 33 executed
