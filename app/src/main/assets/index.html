@@ -133,6 +133,7 @@ textarea.field{height:auto;min-height:96px;padding:12px 14px;resize:none;line-he
 .card .field{margin:12px 0 0}
 .card .btn{margin-top:12px}
 .card .small{margin:10px 0 0}
+.dbg{font-size:11.5px;color:var(--muted);margin:12px 4px 0;line-height:1.45;word-break:break-word}
 .note2{font-size:12.5px;color:var(--muted);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #askbar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 76px);background:var(--text);color:var(--bg);border-radius:16px;padding:10px 10px 10px 16px;display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;z-index:15;box-shadow:var(--shadow)}
 #askbar[hidden]{display:none}
@@ -431,6 +432,9 @@ function item(id){ return data.items.find(i => i.id===id); }
 function menuSheet(id){
   const it = item(id); if(!it) return;
   const r = (act,ic,l,cls) => '<button class="row '+(cls||'')+'" data-act="'+act+'" data-id="'+esc(id)+'">'+ic+l+'</button>';
+  /* what happened when the app looked for this video's title and picture (helps when one is missing) */
+  const pr = pv[id] || {};
+  const check = !N ? '' : 'Preview check: ' + (pr.g ? pr.g : (pr.a ? 'done' : 'not tried yet')) + (it.dbg ? ' · Shared with: ' + it.dbg : '');
   sheet('<h2>'+esc(titleOf(it))+'</h2><p class="sub">'+esc(it.url)+'</p>'
     + r('open',IC.play,'Watch now')
     + r('toggle',IC.check, it.watched ? 'Mark as not watched' : 'Mark as watched')
@@ -438,7 +442,8 @@ function menuSheet(id){
     + r('m-rename',IC.edit,'Rename / add a note')
     + (N ? r('m-refresh',IC.search,'Get the preview again') : '')
     + r('m-share',IC.share,'Send to someone')
-    + r('m-delete',IC.trash,'Delete','hot'));
+    + r('m-delete',IC.trash,'Delete','hot')
+    + (check ? '<p class="dbg">'+esc(check)+'</p>' : ''));
 }
 function moveSheet(id){
   const it = item(id); if(!it) return;

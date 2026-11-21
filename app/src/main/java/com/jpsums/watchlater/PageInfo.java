@@ -127,4 +127,182 @@ public final class PageInfo {
         m.appendTail(out);
         return out.toString();
     }
+
+    /* ---------- Facebook / Instagram: their pages hide the preview in other places ---------- */
+
+    private static final Pattern J_THUMB = Pattern.compile(
+            "\"(?:preferred_thumbnail|thumbnailImage|previewImage|thumbnail_image|display_resources)\"\\s*:\\s*[\\[{]+"
+            + "(?:\\s*\"image\"\\s*:\\s*\\{)?\\s*\"(?:uri|src)\"\\s*:\\s*\"(https:[^\"]+)\"");
+    private static final Pattern J_THUMB2 = Pattern.compile(
+            "\"(?:first_frame_thumbnail|thumbnail_url|thumbnailUrl|thumbnail_src|display_url)\"\\s*:\\s*\"(https:[^\"]+)\"");
+    private static final Pattern J_TEXT = Pattern.compile(
+            "\"(?:message|savable_description|title)\"\\s*:\\s*\\{\\s*\"text\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.){3,800})\"");
+    private static final Pattern POSTER = Pattern.compile("<video\\b[^>]*\\sposter\\s*=\\s*\"([^\"]+)\"", Pattern.CASE_INSENSITIVE);
+    private static final Pattern IMG = Pattern.compile("<img\\b[^>]*>", Pattern.CASE_INSENSITIVE);
+    private static final Pattern BG = Pattern.compile("background-image\\s*:\\s*url\\(\\s*(?:&quot;|[\"'])?([^)\"']+?)(?:&quot;|[\"'])?\\s*\\)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SMALL = Pattern.compile("[/_.]((?:p|s|c)?\\d{2,3})x(\\d{2,3})[/_.]");
+    private static final Pattern CAPTION = Pattern.compile(
+            "class=\"[^\"]*(?:Caption|userContent)[^\"]*\"[^>]*>(.*?)(?:</div>|<div\\b)", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    private static final Pattern FB_ID = Pattern.compile(
+            "(?:/reel/|/reels/|/videos/(?:[^/?#]+/)?|[?&]v=|video_id=|story_fbid=)(\\d{6,})");
+    private static final Pattern IG_CODE = Pattern.compile("instagram\\.com/(?:[^/]+/)?(reel|reels|p|tv)/([A-Za-z0-9_-]{5,})");
+
+    /** True for a picture address on Facebook's / Instagram's media servers (not their logo or icons). */
+    static boolean isMedia(String url) {
+        if (url == null || !url.startsWith("https://")) return false;
+        String u = url.toLowerCase(Locale.ROOT);
+        if (!(u.contains("fbcdn.net") || u.contains("cdninstagram.com"))) return false;
+        return !u.contains("//static.") && !u.contains("rsrc.php") && !u.contains("/emoji");
+    }
+
+    /** JSON text (as found inside a page's scripts) back to normal text. */
+    public static String jsonUnescape(String s) {
+        if (s == null || s.indexOf('\\') < 0) return s == null ? "" : s;
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c != '\\' || i + 1 >= s.length()) {
+                b.append(c);
+                continue;
+            }
+            char n = s.charAt(++i);
+            if (n == 'u' && i + 4 < s.length()) {
+                try {
+                    b.append((char) Integer.parseInt(s.substring(i + 1, i + 5), 16));
+                    i += 4;
+                } catch (NumberFormatException e) {
+                    b.append('u');
+                }
+            } else if (n == 'n' || n == 'r' || n == 't') {
+                b.append(' ');
+            } else {
+                b.append(n);
+            }
+        }
+        return b.toString();
+    }
+
+    private static String jsonThumb(String html) {
+        for (Pattern pat : new Pattern[]{J_THUMB, J_THUMB2}) {
+            Matcher m = pat.matcher(html);
+            while (m.find()) {
+                String u = decode(jsonUnescape(m.group(1)));
+                if (isMedia(u)) return u;
+            }
+        }
+        return "";
+    }
+
+    /** A Facebook video page: normal preview tags first, then what its scripts carry. */
+    public static PageInfo parseFacebook(String html) {
+        PageInfo p = new PageInfo();
+        if (html == null) return p;
+        // read the tags ourselves: parse() throws the picture away when the title is missing
+        PageInfo og = parse(html);
+        p.title = og.title;
+        p.desc = og.desc;
+        if (isMedia(og.image)) p.image = og.image;
+        if (p.image.isEmpty()) {
+            Matcher m = META.matcher(html);
+            while (m.find() && p.image.isEmpty()) {
+                String tag = m.group();
+                if (!tag.contains("og:image") && !tag.contains("twitter:image")) continue;
+                Matcher a = ATTR.matcher(tag);
+                while (a.find()) {
+                    if (!a.group(1).equalsIgnoreCase("content")) continue;
+                    String v = decode(a.group(3) != null ? a.group(3) : a.group(4) != null ? a.group(4) : a.group(5));
+                    if (isMedia(v)) p.image = v;
+                }
+            }
+        }
+        if (p.image.isEmpty()) p.image = jsonThumb(html);
+        if (p.title.isEmpty()) {
+            Matcher t = J_TEXT.matcher(html);
+            if (t.find()) p.title = cleanTitle(jsonUnescape(t.group(1)));
+        }
+        return p;
+    }
+
+    /** An embed page (Facebook's video plugin, Instagram's /embed): the poster picture and the caption. */
+    public static PageInfo parseEmbed(String html) {
+        PageInfo p = new PageInfo();
+        if (html == null) return p;
+        Matcher v = POSTER.matcher(html);
+        while (v.find() && p.image.isEmpty()) {
+            String u = decode(v.group(1));
+            if (isMedia(u)) p.image = u;
+        }
+        if (p.image.isEmpty()) p.image = jsonThumb(html);
+        if (p.image.isEmpty()) {
+            Matcher im = IMG.matcher(html);
+            while (im.find() && p.image.isEmpty()) {
+                String tag = im.group(), src = "", cls = "";
+                int w = -1;
+                Matcher a = ATTR.matcher(tag);
+                while (a.find()) {
+                    String n = a.group(1).toLowerCase(Locale.ROOT);
+                    String val = a.group(3) != null ? a.group(3) : a.group(4) != null ? a.group(4) : a.group(5);
+                    if (n.equals("src")) src = decode(val);
+                    else if (n.equals("class")) cls = val.toLowerCase(Locale.ROOT);
+                    else if (n.equals("width") || n.equals("height")) {
+                        try {
+                            w = Math.max(w, Integer.parseInt(val.trim()));
+                        } catch (NumberFormatException e) {
+                            // not a plain number
+                        }
+                    }
+                }
+                if (!isMedia(src) || cls.contains("profile") || cls.contains("avatar")) continue;
+                if (w >= 0 && w < 100) continue;          // a small icon or profile picture
+                Matcher sm = SMALL.matcher(src);
+                if (sm.find()) {
+                    try {
+                        if (Integer.parseInt(sm.group(2)) < 200) continue;
+                    } catch (NumberFormatException e) {
+                        // keep it
+                    }
+                }
+                p.image = src;
+            }
+        }
+        if (p.image.isEmpty()) {
+            Matcher b = BG.matcher(html);
+            while (b.find() && p.image.isEmpty()) {
+                String u = decode(b.group(1).trim());
+                if (isMedia(u)) p.image = u;
+            }
+        }
+        Matcher c = CAPTION.matcher(html);
+        if (c.find()) {
+            String text = decode(c.group(1).replaceAll("(?is)<a\\b[^>]*class=\"[^\"]*(?:Username|CaptionUsername)[^\"]*\"[^>]*>.*?</a>", " ")
+                    .replaceAll("(?s)<[^>]+>", " "));
+            p.title = cleanTitle(text);
+        }
+        if (p.title.isEmpty()) {
+            Matcher t = J_TEXT.matcher(html);
+            if (t.find()) p.title = cleanTitle(jsonUnescape(t.group(1)));
+        }
+        return p;
+    }
+
+    /** The video number inside a Facebook link (also from a "log in, then continue to..." address). */
+    public static String facebookId(String... urls) {
+        for (String u : urls) {
+            if (u == null) continue;
+            String d = u.replace("%2F", "/").replace("%2f", "/").replace("%3F", "?").replace("%3f", "?")
+                    .replace("%3D", "=").replace("%3d", "=").replace("%26", "&");
+            Matcher m = FB_ID.matcher(d);
+            if (m.find()) return m.group(1);
+        }
+        return "";
+    }
+
+    /** Instagram's embed page for a post or reel link, or "" when the link is something else. */
+    public static String instagramEmbed(String url) {
+        if (url == null) return "";
+        Matcher m = IG_CODE.matcher(url);
+        if (!m.find()) return "";
+        String kind = m.group(1).startsWith("reel") ? "reel" : m.group(1);
+        return "https://www.instagram.com/" + kind + "/" + m.group(2) + "/embed/captioned/";
+    }
 }

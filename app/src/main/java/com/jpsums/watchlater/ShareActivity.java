@@ -2,6 +2,7 @@ package com.jpsums.watchlater;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
@@ -29,6 +30,8 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -58,6 +61,7 @@ public class ShareActivity extends Activity {
     private String suggestedId = "";
     private boolean changing = false;     // you tapped "Change folder" after an auto-save
     private boolean askShown = false;
+    private String shareNote = "";        // what the other app handed over (shown in the video's menu, for troubleshooting)
 
     private boolean night = true;
     private int cSheet, cText, cMuted, cTile, cAccent, cLine;
@@ -83,6 +87,7 @@ public class ShareActivity extends Activity {
         getWindow().setNavigationBarColor(cSheet);
         findExisting(data);
 
+        readShareExtras(getIntent());
         // start getting the title and thumbnail right away, while you choose
         Previews.fetch(this, itemId, url, title, (id, t, d) -> runOnUiThread(() -> onPreview(t, d)));
 
@@ -139,6 +144,56 @@ public class ShareActivity extends Activity {
         if (URL.matcher(title).find()) title = clean(URL.matcher(title).replaceAll(" "));
         if (title.length() > 200) title = title.substring(0, 200);
         return true;
+    }
+
+    /** Some apps attach a picture to the share. Use it as the thumbnail, and note what came. */
+    @SuppressWarnings("deprecation")
+    private void readShareExtras(Intent in) {
+        StringBuilder b = new StringBuilder();
+        Uri picture = null;
+        try {
+            Bundle ex = in.getExtras();
+            if (ex != null) {
+                for (String k : ex.keySet()) {
+                    if (b.length() > 0) b.append(", ");
+                    b.append(k.replace("android.intent.extra.", ""));
+                }
+                Object stream = ex.get(Intent.EXTRA_STREAM);
+                if (stream instanceof Uri) picture = (Uri) stream;
+            }
+            ClipData clip = in.getClipData();
+            if (clip != null) {
+                b.append(" | clip ").append(clip.getItemCount());
+                for (int i = 0; i < clip.getItemCount() && picture == null; i++) {
+                    Uri u = clip.getItemAt(i).getUri();
+                    if (u != null) picture = u;
+                }
+                if (picture != null) b.append(" with a file");
+            }
+        } catch (Exception e) {
+            b.append(" (could not read)");
+        }
+        shareNote = b.length() > 160 ? b.substring(0, 160) : b.toString();
+        if (picture == null) return;
+        final Uri uri = picture;
+        final String id = itemId;
+        new Thread(() -> {
+            try {
+                InputStream is = getContentResolver().openInputStream(uri);
+                if (is == null) return;
+                try {
+                    ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                    byte[] buf = new byte[16384];
+                    int n;
+                    while (bo.size() < 6 * 1024 * 1024 && (n = is.read(buf)) > 0) bo.write(buf, 0, n);
+                    Previews.thumbFromShare(getApplicationContext(), id, bo.toByteArray());
+                } finally {
+                    is.close();
+                }
+            } catch (Exception e) {
+                // no picture after all
+            }
+        }).start();
     }
 
     private static String clean(String s) {
@@ -487,6 +542,7 @@ public class ShareActivity extends Activity {
             found.put("watched", false);
             found.put("manual", manual);
             if (!note.isEmpty()) found.put("note", note);
+            if (!shareNote.isEmpty()) found.put("dbg", shareNote);
             return true;
         });
     }

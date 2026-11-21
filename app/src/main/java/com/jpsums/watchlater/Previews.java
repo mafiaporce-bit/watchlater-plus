@@ -206,8 +206,12 @@ public final class Previews {
                     if (it == null) continue;
                     String id = safe(it.optString("id"));
                     JSONObject e = all.optJSONObject(id);
-                    if (id.isEmpty() || (e != null && e.has("a"))) continue;
-                    fetch(c, id, it.optString("url"), it.optString("title"), null);
+                    String link = it.optString("url");
+                    if (id.isEmpty()) continue;
+                    boolean tried = e != null && e.has("a");
+                    boolean retry = tried && e.optInt("m", 1) < METHOD && !isYouTube(link) && (!e.has("t") || !e.has("i"));
+                    if (tried && !retry) continue;
+                    fetch(c, id, link, it.optString("title"), null);
                     started++;
                 }
             } catch (Exception e) {
@@ -255,20 +259,39 @@ public final class Previews {
         });
     }
 
+    /** Bump when the way of fetching gets better, so videos that got nothing before are tried again. */
+    private static final int METHOD = 2;
+
+    private static final String HTML = "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.5";
+    private static final String UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            + "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
     private static void run(Context c, String id, String url, String knownTitle, Listener once) {
         PageInfo info;
+        StringBuilder log = new StringBuilder();
         boolean yt = isYouTube(url);
         try {
             // YouTube already shares its title, and its thumbnail needs no fetching
-            info = (yt && !knownTitle.trim().isEmpty()) ? new PageInfo() : load(url);
+            if (yt && !knownTitle.trim().isEmpty()) {
+                info = new PageInfo();
+                log.append("YouTube: title came with the share, picture comes from YouTube");
+            } else {
+                info = load(url, log);
+            }
         } catch (IOException e) {
-            return; // offline or unreachable: leave it for next time
+            // offline or unreachable: leave it for next time, but say why
+            note(c, id, "No connection when it tried (" + e.getClass().getSimpleName() + ")");
+            return;
         } catch (Exception e) {
             info = new PageInfo();
+            log.append("; problem: ").append(e.getClass().getSimpleName());
         }
 
         boolean thumb = false;
-        if (!yt && !info.image.isEmpty()) thumb = saveThumb(c, id, info.image);
+        if (!yt && !info.image.isEmpty()) {
+            thumb = saveThumb(c, id, info.image);
+            log.append(thumb ? "; picture saved" : "; picture could not be downloaded");
+        }
 
         boolean learnedAlready = false;
         synchronized (LOCK) {
@@ -278,6 +301,8 @@ public final class Previews {
                 if (e == null) e = new JSONObject();
                 learnedAlready = e.optBoolean("l");
                 e.put("a", System.currentTimeMillis());
+                e.put("m", METHOD);
+                e.put("g", log.length() > 400 ? log.substring(0, 400) : log.toString());
                 if (!info.title.isEmpty()) e.put("t", info.title);
                 if (!info.desc.isEmpty()) e.put("d", info.desc);
                 if (thumb) e.put("i", 1);
@@ -312,6 +337,50 @@ public final class Previews {
         if (app != null) app.onPreview(id, info.title, info.desc);
     }
 
+    /** Writes only the "what happened" line of an entry (shown under the video's menu in the app). */
+    private static void note(Context c, String id, String text) {
+        synchronized (LOCK) {
+            try {
+                JSONObject all = readLocked(c);
+                JSONObject e = all.optJSONObject(id);
+                if (e == null) e = new JSONObject();
+                e.put("g", text);
+                all.put(id, e);
+                writeLocked(c, all);
+            } catch (JSONException ex) {
+                // ignore
+            }
+        }
+        Listener app = appListener;
+        if (app != null) app.onPreview(id, "", "");
+    }
+
+    /** A picture that came with the share itself (some apps attach one). */
+    public static void thumbFromShare(final Context context, final String rawId, final byte[] raw) {
+        final Context c = context.getApplicationContext();
+        final String id = safe(rawId);
+        if (id.isEmpty() || raw == null) return;
+        POOL.execute(() -> {
+            if (!saveThumbBytes(c, id, raw)) return;
+            synchronized (LOCK) {
+                try {
+                    JSONObject all = readLocked(c);
+                    JSONObject e = all.optJSONObject(id);
+                    if (e == null) e = new JSONObject();
+                    e.put("i", 1);
+                    all.put(id, e);
+                    writeLocked(c, all);
+                } catch (JSONException ex) {
+                    // ignore
+                }
+            }
+            Listener app = appListener;
+            if (app != null) app.onPreview(id, "", "");
+        });
+    }
+
+    /* ---------- where to look, per site ---------- */
+
     private static String host(String url) {
         try {
             String x = new URL(url).getHost();
@@ -323,94 +392,275 @@ public final class Previews {
         }
     }
 
+    private static boolean on(String host, String site) {
+        return host.equals(site) || host.endsWith("." + site);
+    }
+
     private static boolean isYouTube(String url) {
         String h = host(url);
-        return h.equals("youtube.com") || h.endsWith(".youtube.com") || h.equals("youtu.be");
+        return on(h, "youtube.com") || h.equals("youtu.be");
     }
 
-    private static PageInfo load(String url) throws IOException {
+    private static String enc(String s) throws IOException {
+        return URLEncoder.encode(s, "UTF-8");
+    }
+
+    private static String found(PageInfo p) {
+        return (p.title.isEmpty() ? " no title" : " title") + (p.image.isEmpty() ? ", no picture" : ", picture");
+    }
+
+    private static void fill(PageInfo into, PageInfo from) {
+        if (into.title.isEmpty()) into.title = from.title;
+        if (into.desc.isEmpty()) into.desc = from.desc;
+        if (into.image.isEmpty()) into.image = from.image;
+    }
+
+    private static boolean isLoginWall(String finalUrl) {
+        String u = finalUrl == null ? "" : finalUrl.toLowerCase(Locale.ROOT);
+        return u.contains("/login") || u.contains("login.php") || u.contains("/checkpoint") || u.contains("/accounts/login");
+    }
+
+    private static PageInfo load(String url, StringBuilder log) throws IOException {
         String h = host(url);
-        try {
-            if (isYouTube(url)) {
-                return oembed(get("https://www.youtube.com/oembed?format=json&url=" + URLEncoder.encode(url, "UTF-8"), 200000));
-            }
-            if (h.equals("tiktok.com") || h.endsWith(".tiktok.com")) {
-                PageInfo p = oembed(get("https://www.tiktok.com/oembed?url=" + URLEncoder.encode(url, "UTF-8"), 200000));
-                if (!p.title.isEmpty()) return p;
-            }
-        } catch (JSONException e) {
-            // fall through to reading the page itself
+        if (isYouTube(url)) {
+            Resp r = http("https://www.youtube.com/oembed?format=json&url=" + enc(url), 200000, false, HTML);
+            log.append("YouTube info ").append(r.code);
+            return oembed(r.text());
         }
-        String html = get(url, 600000);
-        return html == null ? new PageInfo() : PageInfo.parse(html);
-    }
-
-    private static PageInfo oembed(String json) throws JSONException {
-        PageInfo p = new PageInfo();
-        if (json == null) return p;
-        JSONObject o = new JSONObject(json);
-        p.title = PageInfo.cleanTitle(o.optString("title"));
-        String author = o.optString("author_name").trim();
-        if (p.title.isEmpty() && !author.isEmpty()) p.title = "Video by " + author;
-        p.desc = author;
-        String img = o.optString("thumbnail_url");
-        if (img.startsWith("https://")) p.image = img;
+        if (on(h, "tiktok.com")) return tiktok(url, log);
+        if (on(h, "facebook.com") || on(h, "fb.watch") || on(h, "fb.com") || on(h, "fb.gg")) return facebook(url, log);
+        if (on(h, "instagram.com")) return instagram(url, log);
+        Resp r = http(url, 600000, false, HTML);
+        log.append("page ").append(r.code);
+        PageInfo p = r.body == null ? new PageInfo() : PageInfo.parse(r.text());
+        log.append(found(p));
         return p;
     }
 
-    private static String userAgent() {
+    private static PageInfo tiktok(String url, StringBuilder log) throws IOException {
+        Resp r = http("https://www.tiktok.com/oembed?url=" + enc(url), 200000, false, HTML);
+        PageInfo p = oembed(r.text());
+        log.append("TikTok info ").append(r.code).append(found(p));
+        if (!p.title.isEmpty() || !p.image.isEmpty()) return p;
+        // a short link (vm.tiktok.com): find the real address first, then ask again
+        Resp page = http(url, 600000, false, HTML);
+        log.append("; page ").append(page.code);
+        if (!page.finalUrl.equals(url) && on(host(page.finalUrl), "tiktok.com")) {
+            String real = page.finalUrl;
+            int q = real.indexOf('?');
+            if (q > 0) real = real.substring(0, q);
+            Resp r2 = http("https://www.tiktok.com/oembed?url=" + enc(real), 200000, false, HTML);
+            p = oembed(r2.text());
+            log.append("; info again ").append(r2.code).append(found(p));
+        }
+        if (p.title.isEmpty() && p.image.isEmpty() && page.body != null) {
+            p = PageInfo.parse(page.text());
+            log.append("; from page").append(found(p));
+        }
+        return p;
+    }
+
+    /**
+     * Facebook shows a log-in page to anything that looks like a phone without an account.
+     * So: 1) the normal public web page, 2) Facebook's own video embed (made for other sites),
+     * 3) the phone page as a last try.
+     */
+    private static PageInfo facebook(String url, StringBuilder log) throws IOException {
+        String www = url.replaceFirst("(?i)^https?://(m|mbasic|web|touch|mobile)\\.facebook\\.com", "https://www.facebook.com");
+        PageInfo best = new PageInfo();
+
+        Resp r = http(www, 900000, true, HTML);
+        boolean wall = isLoginWall(r.finalUrl);
+        log.append("Facebook page ").append(r.code).append(wall ? " (asked to log in)" : "");
+        if (r.body != null && !wall) {
+            PageInfo x = PageInfo.parseFacebook(r.text());
+            fill(best, x);
+            log.append(found(x));
+        }
+
+        if (best.title.isEmpty() || best.image.isEmpty()) {
+            String vid = PageInfo.facebookId(url, r.finalUrl);
+            String href = !vid.isEmpty() ? "https://www.facebook.com/video.php?v=" + vid : (wall ? www : r.finalUrl);
+            Resp e = http("https://www.facebook.com/plugins/video.php?show_text=true&width=500&href=" + enc(href),
+                    700000, true, HTML);
+            log.append("; embed ").append(e.code).append(vid.isEmpty() ? " (no video number)" : "");
+            if (e.body != null) {
+                PageInfo x = PageInfo.parseEmbed(e.text());
+                fill(best, x);
+                log.append(found(x));
+            }
+        }
+
+        if (best.title.isEmpty() && best.image.isEmpty()) {
+            Resp m = http(url, 700000, false, HTML);
+            boolean wall2 = isLoginWall(m.finalUrl);
+            log.append("; phone page ").append(m.code).append(wall2 ? " (asked to log in)" : "");
+            if (m.body != null && !wall2) {
+                PageInfo x = PageInfo.parseFacebook(m.text());
+                fill(best, x);
+                log.append(found(x));
+            }
+        }
+        return best;
+    }
+
+    private static PageInfo instagram(String url, StringBuilder log) throws IOException {
+        PageInfo best = new PageInfo();
+        Resp r = http(url, 900000, true, HTML);
+        boolean wall = isLoginWall(r.finalUrl);
+        log.append("Instagram page ").append(r.code).append(wall ? " (asked to log in)" : "");
+        if (r.body != null && !wall) {
+            PageInfo x = PageInfo.parseFacebook(r.text());
+            fill(best, x);
+            log.append(found(x));
+        }
+        if (best.title.isEmpty() || best.image.isEmpty()) {
+            String embed = PageInfo.instagramEmbed(wall ? url : r.finalUrl);
+            if (embed.isEmpty()) embed = PageInfo.instagramEmbed(url);
+            if (!embed.isEmpty()) {
+                Resp e = http(embed, 700000, false, HTML);
+                log.append("; embed ").append(e.code);
+                if (e.body != null) {
+                    PageInfo x = PageInfo.parseEmbed(e.text());
+                    fill(best, x);
+                    log.append(found(x));
+                }
+            }
+        }
+        return best;
+    }
+
+    private static PageInfo oembed(String json) {
+        PageInfo p = new PageInfo();
+        if (json == null) return p;
+        try {
+            JSONObject o = new JSONObject(json);
+            p.title = PageInfo.cleanTitle(o.optString("title"));
+            String author = o.optString("author_name").trim();
+            if (p.title.isEmpty() && !author.isEmpty()) p.title = "Video by " + author;
+            p.desc = author;
+            String img = o.optString("thumbnail_url");
+            if (img.startsWith("https://")) p.image = img;
+        } catch (JSONException e) {
+            // not the answer we hoped for
+        }
+        return p;
+    }
+
+    /* ---------- the web request ---------- */
+
+    private static final class Resp {
+        int code = 0;
+        String finalUrl = "";
+        byte[] body;
+
+        String text() {
+            return body == null ? null : new String(body, StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String phoneAgent() {
         return "Mozilla/5.0 (Linux; Android " + Build.VERSION.RELEASE + "; " + Build.MODEL
                 + ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
     }
 
-    /** Text of a page, or null when the site answers with an error. Throws when there is no connection. */
-    private static String get(String url, int maxBytes) throws IOException {
-        byte[] b = getBytes(url, maxBytes, "text/html,application/json;q=0.9,*/*;q=0.5");
-        return b == null ? null : new String(b, StandardCharsets.UTF_8);
+    private static String site(String url) {
+        String h = host(url);
+        String[] p = h.split("\\.");
+        return p.length <= 2 ? h : p[p.length - 2] + "." + p[p.length - 1];
     }
 
-    private static byte[] getBytes(String url, int maxBytes, String accept) throws IOException {
+    /**
+     * One GET that follows redirects itself (keeping the cookies each step hands out, which
+     * Facebook needs). body stays null unless the final answer is a normal 200 page.
+     * Throws when there is no connection at all.
+     */
+    private static Resp http(String url, int maxBytes, boolean desktop, String accept) throws IOException {
+        Resp r = new Resp();
         String current = url;
-        for (int hop = 0; hop < 6; hop++) {
+        java.util.Map<String, String> cookies = new java.util.LinkedHashMap<String, String>();
+        boolean page = accept.startsWith("text/html");
+        for (int hop = 0; hop < 8; hop++) {
             if (current.regionMatches(true, 0, "http://", 0, 7)) current = "https://" + current.substring(7);
-            if (!current.regionMatches(true, 0, "https://", 0, 8)) return null;
+            r.finalUrl = current;
+            if (!current.regionMatches(true, 0, "https://", 0, 8)) {
+                r.code = -1;
+                return r;
+            }
             HttpURLConnection con = (HttpURLConnection) new URL(current).openConnection();
             try {
                 con.setInstanceFollowRedirects(false);
                 con.setConnectTimeout(7000);
                 con.setReadTimeout(9000);
-                con.setRequestProperty("User-Agent", userAgent());
+                con.setRequestProperty("User-Agent", desktop ? UA_DESKTOP : phoneAgent());
                 con.setRequestProperty("Accept", accept);
                 con.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+                if (page) {
+                    con.setRequestProperty("Sec-Fetch-Dest", "document");
+                    con.setRequestProperty("Sec-Fetch-Mode", "navigate");
+                    con.setRequestProperty("Sec-Fetch-Site", "none");
+                    con.setRequestProperty("Sec-Fetch-User", "?1");
+                    con.setRequestProperty("Upgrade-Insecure-Requests", "1");
+                }
+                if (!cookies.isEmpty()) {
+                    StringBuilder ck = new StringBuilder();
+                    for (java.util.Map.Entry<String, String> e : cookies.entrySet()) {
+                        if (ck.length() > 0) ck.append("; ");
+                        ck.append(e.getKey()).append('=').append(e.getValue());
+                    }
+                    con.setRequestProperty("Cookie", ck.toString());
+                }
                 int code = con.getResponseCode();
+                r.code = code;
+                for (java.util.Map.Entry<String, java.util.List<String>> hd : con.getHeaderFields().entrySet()) {
+                    if (hd.getKey() == null || !hd.getKey().equalsIgnoreCase("Set-Cookie")) continue;
+                    for (String line : hd.getValue()) {
+                        int semi = line.indexOf(';');
+                        String pair = semi > 0 ? line.substring(0, semi) : line;
+                        int eq = pair.indexOf('=');
+                        if (eq > 0) cookies.put(pair.substring(0, eq).trim(), pair.substring(eq + 1).trim());
+                    }
+                }
                 if (code >= 300 && code < 400) {
                     String loc = con.getHeaderField("Location");
-                    if (loc == null || loc.isEmpty()) return null;
-                    current = new URL(new URL(current), loc).toString();
+                    if (loc == null || loc.isEmpty()) return r;
+                    String next = new URL(new URL(current), loc).toString();
+                    if (!site(next).equals(site(current))) cookies.clear(); // never carry cookies to another site
+                    current = next;
                     continue;
                 }
-                if (code != 200) return null;
+                if (code != 200) return r;
                 InputStream in = con.getInputStream();
                 try {
                     ByteArrayOutputStream bo = new ByteArrayOutputStream();
                     byte[] buf = new byte[16384];
                     int n;
                     while (bo.size() < maxBytes && (n = in.read(buf)) > 0) bo.write(buf, 0, n);
-                    return bo.toByteArray();
+                    r.body = bo.toByteArray();
                 } finally {
                     in.close();
                 }
+                return r;
             } finally {
                 con.disconnect();
             }
         }
-        return null;
+        r.code = -2; // went round in circles
+        return r;
     }
 
     /** Downloads the preview picture, shrinks it and keeps it on the phone (the web copies expire). */
     private static boolean saveThumb(Context c, String id, String imageUrl) {
         try {
-            byte[] raw = getBytes(imageUrl, 4 * 1024 * 1024, "image/*,*/*;q=0.5");
+            Resp r = http(imageUrl, 4 * 1024 * 1024, false, "image/avif,image/webp,image/*,*/*;q=0.5");
+            return r.body != null && saveThumbBytes(c, id, r.body);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean saveThumbBytes(Context c, String id, byte[] raw) {
+        try {
             if (raw == null || raw.length < 100) return false;
             BitmapFactory.Options bounds = new BitmapFactory.Options();
             bounds.inJustDecodeBounds = true;
