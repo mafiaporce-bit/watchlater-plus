@@ -8,12 +8,16 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -25,26 +29,44 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * The popup you see after tapping Share > WatchLater+ in Facebook, YouTube, TikTok or any app.
- * It slides up over that app, asks which folder, saves the video and closes,
- * so you stay where you were.
+ *
+ * When the video's words clearly match a folder it is saved straight away and you only see
+ * "Saved to Food" with a Change button. Otherwise it asks which folder, with a box for a
+ * short note. Either way it closes by itself and you stay in the app you were in.
  */
 public class ShareActivity extends Activity {
 
     private static final Pattern URL = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
+    private static final int SCRIM = 0x99000000;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     private String url = "";
     private String title = "";
-    private boolean night = true;
-    private int cSheet, cText, cMuted, cTile, cAccent;
+    private String itemId = "";
+    private String existingFolder = null; // name of the folder this link is already in
+    private String fetchedText = "";      // title + description that arrived from the web
+    private String suggestedId = "";
+    private boolean changing = false;     // you tapped "Change folder" after an auto-save
+    private boolean askShown = false;
 
-    @SuppressWarnings("deprecation")
+    private boolean night = true;
+    private int cSheet, cText, cMuted, cTile, cAccent, cLine;
+
+    private EditText noteInput;
+    private TextView subView, hintView;
+    private final Map<String, TextView> tiles = new HashMap<String, TextView>();
+    private final Map<String, String> tileNames = new HashMap<String, String>();
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -57,13 +79,33 @@ public class ShareActivity extends Activity {
 
         JSONObject data = load();
         pickColours(data);
-
-        // draw the dimmed background behind the status bar too
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+        getWindow().setStatusBarColor(SCRIM);
         getWindow().setNavigationBarColor(cSheet);
+        findExisting(data);
 
-        setContentView(buildUi(data));
+        // start getting the title and thumbnail right away, while you choose
+        Previews.fetch(this, itemId, url, title, (id, t, d) -> runOnUiThread(() -> onPreview(t, d)));
+
+        JSONObject settings = data.optJSONObject("settings");
+        boolean auto = settings == null || settings.optBoolean("autoSort", true);
+        Sorter.Pick pick = Store.suggest(this, data, title, url);
+        suggestedId = pick.id;
+
+        if (existingFolder == null && auto && pick.sure) {
+            String name = folderLabel(data, pick.id);
+            if (name != null && save(pick.id, false, "")) {
+                setContentView(buildSaved(name));
+                handler.postDelayed(this::finish, 3500);
+                return;
+            }
+        }
+        showAsk(data);
+    }
+
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     /* ---------- reading what was shared ---------- */
@@ -122,20 +164,78 @@ public class ShareActivity extends Activity {
         cText = night ? 0xFFF3F1EC : 0xFF17161C;
         cMuted = night ? 0xFF9C9AA6 : 0xFF6D6A75;
         cTile = night ? 0xFF2A2A35 : 0xFFEFEADF;
-        cAccent = night ? 0xFFFFB22E : 0xFFF5A516;
+        cAccent = night ? 0xFFFFB22E : 0xFFE08A00;
+        cLine = night ? 0xFF3A3A47 : 0xFFDDD6C8;
+    }
+
+    /** Is this link already saved? Then reuse its id and remember where it is. */
+    private void findExisting(JSONObject data) {
+        JSONArray items = data.optJSONArray("items");
+        for (int i = 0; items != null && i < items.length(); i++) {
+            JSONObject it = items.optJSONObject(i);
+            if (it == null || !url.equals(it.optString("url"))) continue;
+            itemId = it.optString("id");
+            String label = folderLabel(data, it.optString("folderId"));
+            existingFolder = label == null ? "your list" : label;
+            break;
+        }
+        if (itemId.isEmpty()) {
+            itemId = "v" + Long.toString(System.currentTimeMillis(), 36)
+                    + Integer.toString((int) (Math.random() * 1295), 36);
+        }
+    }
+
+    /** "🍔 Food" for a folder id, or null when there is no such folder. */
+    private static String folderLabel(JSONObject data, String id) {
+        JSONArray folders = data.optJSONArray("folders");
+        for (int i = 0; folders != null && i < folders.length(); i++) {
+            JSONObject f = folders.optJSONObject(i);
+            if (f != null && id.equals(f.optString("id"))) {
+                return (f.optString("emoji", "📁") + " " + f.optString("name")).trim();
+            }
+        }
+        return null;
+    }
+
+    /* ---------- the title arrived from the web ---------- */
+
+    private void onPreview(String t, String d) {
+        if (isFinishing() || isDestroyed() || t == null || t.isEmpty()) return;
+        fetchedText = (t + " " + (d == null ? "" : d)).trim();
+        if (!askShown) return;
+        if (title.isEmpty() && existingFolder == null && subView != null) subView.setText(t);
+        Sorter.Pick pick = Store.suggest(this, load(), title + " " + fetchedText, url);
+        if (!pick.id.isEmpty() && !pick.id.equals(suggestedId)) {
+            suggestedId = pick.id;
+            markSuggestion();
+        }
+    }
+
+    private void markSuggestion() {
+        for (Map.Entry<String, TextView> e : tiles.entrySet()) {
+            boolean on = e.getKey().equals(suggestedId);
+            GradientDrawable g = rounded(cTile, 16);
+            if (on) g.setStroke(dp(2), cAccent);
+            e.getValue().setBackground(g);
+        }
+        if (hintView != null) {
+            String name = tileNames.get(suggestedId);
+            hintView.setVisibility(name == null ? View.GONE : View.VISIBLE);
+            if (name != null) hintView.setText("Looks like " + name);
+        }
     }
 
     /* ---------- the popup ---------- */
 
-    private View buildUi(JSONObject data) {
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(0x99000000);
-        root.setPadding(0, dp(48), 0, 0);
+    private LinearLayout newSheet(FrameLayout root) {
+        root.setBackgroundColor(SCRIM);
         root.setOnClickListener(v -> finish());
 
         LinearLayout sheet = new LinearLayout(this);
         sheet.setOrientation(LinearLayout.VERTICAL);
-        sheet.setClickable(true); // taps on the sheet itself must not close it
+        sheet.setClickable(true);             // taps on the sheet itself must not close it
+        sheet.setFocusable(true);             // and it takes the focus, so the keyboard stays down
+        sheet.setFocusableInTouchMode(true);
         float r = dp(24);
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(cSheet);
@@ -144,33 +244,24 @@ public class ShareActivity extends Activity {
         sheet.setPadding(dp(16), dp(10), dp(16), dp(14));
         root.addView(sheet, new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM));
 
-        // little grab handle
         View grab = new View(this);
-        grab.setBackground(rounded(night ? 0xFF3A3A47 : 0xFFDDD6C8, 2));
+        grab.setBackground(rounded(cLine, 2));
         LinearLayout.LayoutParams gl = new LinearLayout.LayoutParams(dp(40), dp(4));
         gl.gravity = Gravity.CENTER_HORIZONTAL;
         gl.bottomMargin = dp(14);
         sheet.addView(grab, gl);
+        return sheet;
+    }
 
-        // heading row: brand + close
-        LinearLayout head = new LinearLayout(this);
-        head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.CENTER_VERTICAL);
-        TextView brand = text("WatchLater+", 13, cAccent, true);
-        head.addView(brand, new LinearLayout.LayoutParams(0, WRAP, 1f));
-        TextView close = text("Cancel", 14, cMuted, true);
-        close.setPadding(dp(12), dp(8), dp(4), dp(8));
-        close.setOnClickListener(v -> finish());
-        head.addView(close, new LinearLayout.LayoutParams(WRAP, WRAP));
-        sheet.addView(head, new LinearLayout.LayoutParams(MATCH, WRAP));
+    /** Small "Saved to Food" confirmation after an auto-save. Closes by itself. */
+    private View buildSaved(String folderName) {
+        FrameLayout root = new FrameLayout(this);
+        LinearLayout sheet = newSheet(root);
 
-        TextView h = text("Save to which folder?", 21, cText, true);
-        sheet.addView(h, new LinearLayout.LayoutParams(MATCH, WRAP));
+        sheet.addView(text("WatchLater+  •  sorted for you", 13, cAccent, true), new LinearLayout.LayoutParams(MATCH, WRAP));
+        sheet.addView(text("Saved to " + folderName, 22, cText, true), new LinearLayout.LayoutParams(MATCH, WRAP));
 
-        String existing = existingFolderName(data);
-        String subText = !title.isEmpty() ? title : prettyHost();
-        if (existing != null) subText = "Already saved in " + existing + ". Pick a folder to move it.";
-        TextView sub = text(subText, 14, cMuted, false);
+        TextView sub = text(title.isEmpty() ? prettyHost() : title, 14, cMuted, false);
         sub.setMaxLines(2);
         sub.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(MATCH, WRAP);
@@ -178,32 +269,111 @@ public class ShareActivity extends Activity {
         sl.bottomMargin = dp(12);
         sheet.addView(sub, sl);
 
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView change = tile("Change folder", cTile, cText);
+        change.setGravity(Gravity.CENTER);
+        change.setOnClickListener(v -> {
+            handler.removeCallbacksAndMessages(null);
+            changing = true;
+            showAsk(load());
+        });
+        row.addView(change, tileParams());
+        TextView done = tile("Done", cAccent, 0xFF1B1404);
+        done.setGravity(Gravity.CENTER);
+        done.setOnClickListener(v -> finish());
+        row.addView(done, tileParams());
+        sheet.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP));
+        return root;
+    }
+
+    private void showAsk(JSONObject data) {
+        setContentView(buildAsk(data));
+        askShown = true;
+        markSuggestion();
+    }
+
+    /** "Save to which folder?" with a note box and the folder tiles. */
+    private View buildAsk(JSONObject data) {
+        tiles.clear();
+        tileNames.clear();
+        FrameLayout root = new FrameLayout(this);
+        LinearLayout sheet = newSheet(root);
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        head.addView(text("WatchLater+", 13, cAccent, true), new LinearLayout.LayoutParams(0, WRAP, 1f));
+        TextView close = text(changing ? "Keep it" : "Cancel", 14, cMuted, true);
+        close.setPadding(dp(12), dp(8), dp(4), dp(8));
+        close.setOnClickListener(v -> finish());
+        head.addView(close, new LinearLayout.LayoutParams(WRAP, WRAP));
+        sheet.addView(head, new LinearLayout.LayoutParams(MATCH, WRAP));
+
+        boolean moving = changing || existingFolder != null;
+        sheet.addView(text(moving ? "Move to which folder?" : "Save to which folder?", 21, cText, true),
+                new LinearLayout.LayoutParams(MATCH, WRAP));
+
+        String subText = !title.isEmpty() ? title : prettyHost();
+        if (title.isEmpty() && !fetchedText.isEmpty()) subText = fetchedText;
+        if (existingFolder != null && !changing) subText = "Already saved in " + existingFolder + ". Pick a folder to move it.";
+        subView = text(subText, 14, cMuted, false);
+        subView.setMaxLines(2);
+        subView.setEllipsize(TextUtils.TruncateAt.END);
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(MATCH, WRAP);
+        sl.topMargin = dp(4);
+        sheet.addView(subView, sl);
+
+        hintView = text("", 13, cAccent, true);
+        hintView.setVisibility(View.GONE);
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(MATCH, WRAP);
+        hl.topMargin = dp(4);
+        sheet.addView(hintView, hl);
+
+        // optional note, so you know later what the video was
+        noteInput = new EditText(this);
+        noteInput.setHint("Add a note (optional), e.g. pork belly recipe");
+        noteInput.setSingleLine(true);
+        noteInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        noteInput.setImeOptions(EditorInfo.IME_ACTION_DONE);
+        noteInput.setFilters(new InputFilter[]{new InputFilter.LengthFilter(80)});
+        noteInput.setTextSize(15);
+        noteInput.setTextColor(cText);
+        noteInput.setHintTextColor(cMuted);
+        GradientDrawable nb = rounded(0x00000000, 14);
+        nb.setStroke(dp(2), cLine);
+        noteInput.setBackground(nb);
+        noteInput.setPadding(dp(14), 0, dp(14), 0);
+        LinearLayout.LayoutParams nl = new LinearLayout.LayoutParams(MATCH, dp(48));
+        nl.setMargins(dp(4), dp(12), dp(4), dp(8));
+        sheet.addView(noteInput, nl);
+
         // folder tiles, two per row, scrolls when there are many
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
         JSONArray folders = data.optJSONArray("folders");
         LinearLayout row = null;
         int count = 0;
-        if (folders != null) {
-            for (int i = 0; i < folders.length(); i++) {
-                JSONObject f = folders.optJSONObject(i);
-                if (f == null) continue;
-                final String id = f.optString("id", "");
-                final String name = f.optString("name", "");
-                if (id.isEmpty() || name.isEmpty()) continue;
-                String emoji = f.optString("emoji", "📁");
-                TextView tile = tile(emoji + "  " + name, cTile, cText);
-                tile.setOnClickListener(v -> saveTo(id, name));
-                if (count % 2 == 0) row = newRow(grid);
-                row.addView(tile, tileParams());
-                count++;
-            }
+        for (int i = 0; folders != null && i < folders.length(); i++) {
+            JSONObject f = folders.optJSONObject(i);
+            if (f == null) continue;
+            final String id = f.optString("id", "");
+            final String name = f.optString("name", "");
+            if (id.isEmpty() || name.isEmpty()) continue;
+            final String label = (f.optString("emoji", "📁") + "  " + name);
+            TextView tile = tile(label, cTile, cText);
+            tile.setOnClickListener(v -> pick(id, name));
+            tiles.put(id, tile);
+            tileNames.put(id, name);
+            if (count % 2 == 0) row = newRow(grid);
+            row.addView(tile, tileParams());
+            count++;
         }
         TextView add = tile("+  New folder", 0x00000000, cAccent);
         GradientDrawable dashed = new GradientDrawable();
         dashed.setColor(0x00000000);
         dashed.setCornerRadius(dp(16));
-        dashed.setStroke(dp(2), night ? 0xFF3A3A47 : 0xFFDDD6C8, dp(6), dp(5));
+        dashed.setStroke(dp(2), cLine, dp(6), dp(5));
         add.setBackground(dashed);
         add.setOnClickListener(v -> askNewFolder());
         if (count % 2 == 0) row = newRow(grid);
@@ -271,29 +441,24 @@ public class ShareActivity extends Activity {
         }
     }
 
-    private String existingFolderName(JSONObject data) {
-        JSONArray items = data.optJSONArray("items");
-        JSONArray folders = data.optJSONArray("folders");
-        if (items == null || folders == null) return null;
-        for (int i = 0; i < items.length(); i++) {
-            JSONObject it = items.optJSONObject(i);
-            if (it == null || !url.equals(it.optString("url"))) continue;
-            String fid = it.optString("folderId");
-            for (int j = 0; j < folders.length(); j++) {
-                JSONObject f = folders.optJSONObject(j);
-                if (f != null && fid.equals(f.optString("id"))) return f.optString("name", "your list");
-            }
-            return "your list";
-        }
-        return null;
-    }
-
     /* ---------- saving ---------- */
 
-    private void saveTo(String folderId, String folderName) {
-        boolean ok = false;
-        try {
-            JSONObject data = new JSONObject(Store.readRaw(this));
+    /** You tapped a folder yourself. */
+    private void pick(String folderId, String folderName) {
+        String note = noteInput == null ? "" : clean(noteInput.getText().toString());
+        boolean ok = save(folderId, true, note);
+        if (ok) {
+            // remember this choice so the app can make it for you next time
+            String words = (title + " " + note + " " + fetchedText).trim();
+            Store.learn(this, words, url, folderId, changing ? 2 : 1);
+            if (!title.isEmpty() || !fetchedText.isEmpty()) Previews.markLearned(this, itemId);
+        }
+        Toast.makeText(this, ok ? "Saved to " + folderName : "WatchLater+ could not save this", Toast.LENGTH_SHORT).show();
+        finish();
+    }
+
+    private boolean save(final String folderId, final boolean manual, final String note) {
+        return Store.update(this, data -> {
             JSONArray items = data.optJSONArray("items");
             if (items == null) {
                 items = new JSONArray();
@@ -303,32 +468,27 @@ public class ShareActivity extends Activity {
             JSONObject found = null;
             for (int i = 0; i < items.length(); i++) {
                 JSONObject it = items.optJSONObject(i);
-                if (it != null && url.equals(it.optString("url"))) {
+                if (it != null && (url.equals(it.optString("url")) || itemId.equals(it.optString("id")))) {
                     found = it;
                     break;
                 }
             }
-            if (found != null) {
-                found.put("folderId", folderId);
-                found.put("addedAt", now);
-                found.put("watched", false);
-                if (found.optString("title").isEmpty() && !title.isEmpty()) found.put("title", title);
-            } else {
-                JSONObject it = new JSONObject();
-                it.put("id", "v" + Long.toString(now, 36) + Integer.toString((int) (Math.random() * 1295), 36));
-                it.put("url", url);
-                it.put("title", title);
-                it.put("folderId", folderId);
-                it.put("addedAt", now);
-                it.put("watched", false);
-                items.put(it);
+            if (found == null) {
+                found = new JSONObject();
+                found.put("id", itemId);
+                found.put("url", url);
+                found.put("title", title);
+                items.put(found);
+            } else if (found.optString("title").isEmpty() && !title.isEmpty()) {
+                found.put("title", title);
             }
-            ok = Store.writeRaw(this, data.toString());
-        } catch (JSONException e) {
-            ok = false;
-        }
-        Toast.makeText(this, ok ? "Saved to " + folderName : "WatchLater+ could not save this", Toast.LENGTH_SHORT).show();
-        finish();
+            found.put("folderId", folderId);
+            found.put("addedAt", now);
+            found.put("watched", false);
+            found.put("manual", manual);
+            if (!note.isEmpty()) found.put("note", note);
+            return true;
+        });
     }
 
     private void askNewFolder() {
@@ -363,23 +523,22 @@ public class ShareActivity extends Activity {
         input.requestFocus();
     }
 
-    private void createFolderAndSave(String name) {
-        try {
-            JSONObject data = new JSONObject(Store.readRaw(this));
+    private void createFolderAndSave(final String name) {
+        final String[] target = {"", name}; // id and name of the folder to save into
+        boolean ok = Store.update(this, data -> {
             JSONArray folders = data.optJSONArray("folders");
             if (folders == null) folders = new JSONArray();
-
             // a folder with the same name already? use it
             for (int i = 0; i < folders.length(); i++) {
                 JSONObject f = folders.optJSONObject(i);
                 if (f != null && name.equalsIgnoreCase(f.optString("name"))) {
-                    saveTo(f.optString("id"), f.optString("name"));
-                    return;
+                    target[0] = f.optString("id");
+                    target[1] = f.optString("name");
+                    return false;
                 }
             }
-
-            String id = "f" + Long.toString(System.currentTimeMillis(), 36);
-            JSONObject nf = Store.folder(id, name, "📁");
+            target[0] = "f" + Long.toString(System.currentTimeMillis(), 36);
+            JSONObject nf = Store.folder(target[0], name, "📁");
             // keep "Other" last: put the new folder just before it
             JSONArray out = new JSONArray();
             boolean placed = false;
@@ -394,15 +553,17 @@ public class ShareActivity extends Activity {
             }
             if (!placed) out.put(nf);
             data.put("folders", out);
-            if (!Store.writeRaw(this, data.toString())) {
-                Toast.makeText(this, "WatchLater+ could not save this", Toast.LENGTH_SHORT).show();
-                finish();
-                return;
-            }
-            saveTo(id, name);
-        } catch (JSONException e) {
+            return true;
+        });
+        if (target[0].isEmpty() || (!ok && target[0].startsWith("f") && !folderExists(target[0]))) {
             Toast.makeText(this, "WatchLater+ could not save this", Toast.LENGTH_SHORT).show();
             finish();
+            return;
         }
+        pick(target[0], target[1]);
+    }
+
+    private boolean folderExists(String id) {
+        return folderLabel(load(), id) != null;
     }
 }

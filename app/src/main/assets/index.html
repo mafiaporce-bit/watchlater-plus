@@ -110,6 +110,7 @@ nav button svg{width:22px;height:22px}
 nav button.on{color:var(--accent)}
 #fab{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom) + 78px);width:58px;height:58px;border-radius:20px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--shadow)}
 #fab svg{width:26px;height:26px}
+#fab[hidden]{display:none}
 
 #sheetwrap{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-end}
 #sheetwrap[hidden]{display:none}
@@ -124,6 +125,20 @@ nav button.on{color:var(--accent)}
 .row.hot,.row.hot svg{color:var(--hot)}
 .field{width:100%;height:50px;border-radius:14px;border:2px solid var(--line);background:var(--bg);padding:0 14px;outline:0;margin-bottom:12px}
 .field:focus{border-color:var(--accent)}
+textarea.field{height:auto;min-height:96px;padding:12px 14px;resize:none;line-height:1.4;font-size:14.5px}
+.help{font-size:12.5px;color:var(--muted);margin:-6px 2px 12px}
+.line{display:flex;align-items:center;gap:12px}
+.line .grow{flex:1;min-width:0}
+.line .seg{width:132px;flex:none}
+.card .field{margin:12px 0 0}
+.card .btn{margin-top:12px}
+.card .small{margin:10px 0 0}
+.note2{font-size:12.5px;color:var(--muted);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#askbar{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 76px);background:var(--text);color:var(--bg);border-radius:16px;padding:10px 10px 10px 16px;display:flex;align-items:center;gap:8px;font-weight:700;font-size:14.5px;z-index:15;box-shadow:var(--shadow)}
+#askbar[hidden]{display:none}
+#askbar span{flex:1}
+#askbar button{height:40px;padding:0 14px;border-radius:11px;font-weight:800;font-size:14px;color:var(--bg);border:2px solid rgba(128,128,128,.45)}
+#askbar button.yes{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
 .lbl{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:0 0 6px 2px;text-transform:uppercase;letter-spacing:.6px}
 .pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
 .pick button{min-height:52px;border-radius:14px;background:var(--surface2);padding:0 12px;text-align:left;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:2px solid transparent}
@@ -144,16 +159,18 @@ nav button.on{color:var(--accent)}
 <nav id="nav"></nav>
 <button id="fab" data-act="add" aria-label="Add a link"></button>
 <div id="sheetwrap" hidden><div class="backdrop" data-act="close"></div><section id="sheet" role="dialog" aria-modal="true"></section></div>
+<div id="askbar" hidden><span>Did you watch it?</span><button class="yes" data-act="ask-yes">Yes, done</button><button data-act="ask-no">Not yet</button></div>
 <div id="toast" role="status"></div>
 
 <script>
 'use strict';
-/* WatchLater+ : Part 1. Home list, folders, add / move / rename / delete, watched ticks.
+/* WatchLater+ : Part 2. Home list, folders, add / move / rename / delete, watched ticks,
+   plus previews (title + thumbnail), notes, auto-sort words, reminders.
    On the phone, data lives in the app (shared with the Share popup) through WLNative.
    In a normal browser it falls back to localStorage so the page can be previewed. */
 const N = window.WLNative || null;
 const LS_KEY = 'watchlater_plus_v1';
-const VERSION = 'Part 1';
+const VERSION = 'Part 2';
 const EMOJI = ['🍔','🎤','🏀','😂','📁','🎬','🎵','⚽','🏋️','✈️','🐶','🎮','💡','🛠️','📚','💄','🚗','🧒','💰','🙏','🩺','💃','🎣','⭐'];
 const TINTS = ['#ffb22e33','#ff5c4733','#4f8cff33','#3ecf8e33','#b98bff33','#ff8ad133','#35c9d633','#c9c13a33'];
 
@@ -175,11 +192,11 @@ const IC = {
 
 /* ---------- data ---------- */
 function defaults(){
-  return {v:1, folders:[
-    {id:'food',name:'Food',emoji:'🍔'},
-    {id:'singing',name:'Singing',emoji:'🎤'},
-    {id:'basketball',name:'Basketball',emoji:'🏀'},
-    {id:'funny',name:'Funny',emoji:'😂'},
+  return {v:2, folders:[
+    {id:'food',name:'Food',emoji:'🍔',words:['food','recipe','cooking','pork','chicken','adobo','ulam','masarap']},
+    {id:'singing',name:'Singing',emoji:'🎤',words:['sing','singing','sang','song','cover','karaoke','kanta']},
+    {id:'basketball',name:'Basketball',emoji:'🏀',words:['basketball','nba','pba','dunk','lakers','jokic','curry']},
+    {id:'funny',name:'Funny',emoji:'😂',words:['funny','comedy','joke','prank','meme','laugh']},
     {id:'other',name:'Other',emoji:'📁'}
   ], items:[], settings:{theme:'auto'}};
 }
@@ -207,6 +224,18 @@ function saveData(d){
   catch(e){ toast('Could not save'); }
 }
 let data = loadData();
+/* Titles and thumbnails the phone fetched in the background, keyed by video id. */
+function loadPv(){
+  if(!N || !N.getPreviews) return {};
+  try{ const o = JSON.parse(N.getPreviews()); return o && typeof o==='object' ? o : {}; }catch(e){ return {}; }
+}
+let pv = loadPv();
+function suggest(text, url){
+  if(!N || !N.suggest) return null;
+  try{ const r = N.suggest(String(text||''), String(url||'')); return r ? JSON.parse(r) : null; }catch(e){ return null; }
+}
+function remindCfg(){ const r = data.settings.remind || {}; return {on:!!r.on, h:Number.isInteger(r.h)?r.h:20, m:Number.isInteger(r.m)?r.m:0}; }
+function autoSortOn(){ return data.settings.autoSort !== false; }
 /* Always re-read before a change, so a video saved from the Share popup is never overwritten. */
 function mutate(fn){ const d = loadData(); fn(d); saveData(d); data = d; render(); }
 
@@ -235,11 +264,16 @@ function ytId(url){
     return /^[\w-]{6,20}$/.test(id) ? id : '';
   }catch(e){ return ''; }
 }
-function titleOf(it){
-  let t = String(it.title || '').trim();
+function cleanShared(raw){
+  let t = String(raw || '').trim();
   const m = t.match(/^Watch\s+["“](.+)["”]\s+on YouTube$/i); if(m) t = m[1];
-  t = t.replace(/\s+-\s+YouTube$/i,'').trim();
-  if(t) return t;
+  return t.replace(/\s+-\s+YouTube$/i,'').trim();
+}
+/* The name shown: your own note first, then the shared title, then the fetched title. */
+function titleOf(it){
+  const note = String(it.note || '').trim(); if(note) return note;
+  const t = cleanShared(it.title); if(t) return t;
+  const p = pv[it.id]; if(p && p.t) return String(p.t);
   const s = srcOf(it.url), u = it.url.toLowerCase();
   if(s.k==='fb') return /\/reel\/|\/share\/r\//.test(u) ? 'Facebook reel' : 'Facebook video';
   if(s.k==='yt') return u.includes('/shorts/') ? 'YouTube Short' : 'YouTube video';
@@ -247,6 +281,13 @@ function titleOf(it){
   if(s.k==='tt') return 'TikTok video';
   if(s.k==='x') return 'Post on X';
   return s.name;
+}
+/* Every word we know about a video: used for search, auto-sort and learning. */
+function textOf(it){ const p = pv[it.id] || {}; return [it.note, cleanShared(it.title), p.t, p.d].filter(Boolean).join(' '); }
+/* The original title, when your note is shown as the name. */
+function underTitle(it){
+  if(!String(it.note || '').trim()) return '';
+  const p = pv[it.id] || {}; return cleanShared(it.title) || String(p.t || '');
 }
 function ago(ts){
   const s = Math.max(0, (Date.now() - (ts||0)) / 1000);
@@ -282,10 +323,14 @@ const st = {view:'home', folderId:'', filter:'all', q:''};
 function itemHtml(it){
   const s = srcOf(it.url), f = folder(it.folderId), y = s.k==='yt' ? ytId(it.url) : '';
   const tile = '<span class="tile '+s.k+'"><span class="tname">'+esc(s.name)+'</span></span>';
-  const img = y ? '<img src="https://i.ytimg.com/vi/'+y+'/mqdefault.jpg" alt="" loading="lazy" onerror="this.remove()">' : '';
+  const p = pv[it.id];
+  const src = y ? 'https://i.ytimg.com/vi/'+y+'/mqdefault.jpg'
+    : (p && p.i ? 'https://appassets.androidplatform.net/thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '');
+  const img = src ? '<img src="'+esc(src)+'" alt="" loading="lazy" onerror="this.remove()">' : '';
+  const under = underTitle(it);
   return '<article class="item'+(it.watched?' done':'')+'" data-id="'+esc(it.id)+'">'
     + '<button class="thumb" data-act="open" aria-label="Play">'+tile+img+'<span class="play">'+IC.play+'</span></button>'
-    + '<button class="body" data-act="open"><h3>'+esc(titleOf(it))+'</h3>'
+    + '<button class="body" data-act="open"><h3>'+esc(titleOf(it))+'</h3>'+(under ? '<p class="note2">'+esc(under)+'</p>' : '')
     + '<p class="meta">'+esc(s.name)+' · <span class="fold">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</span> · '+esc(ago(it.addedAt))+'</p></button>'
     + '<div class="acts"><button class="tick" data-act="toggle" aria-label="'+(it.watched?'Mark as not watched':'Mark as watched')+'">'+IC.check+'</button>'
     + '<button class="more" data-act="menu" aria-label="More">'+IC.dots+'</button></div></article>';
@@ -295,7 +340,7 @@ function listHtml(items){
   let rows = items.slice().sort((a,b) => (b.addedAt||0) - (a.addedAt||0));
   if(st.filter==='towatch') rows = rows.filter(i => !i.watched);
   if(st.filter==='watched') rows = rows.filter(i => i.watched);
-  if(q) rows = rows.filter(i => (titleOf(i)+' '+i.url+' '+folder(i.folderId).name).toLowerCase().includes(q));
+  if(q) rows = rows.filter(i => (textOf(i)+' '+titleOf(i)+' '+i.url+' '+folder(i.folderId).name).toLowerCase().includes(q));
   return rows.map(itemHtml).join('');
 }
 function chipsHtml(items){
@@ -348,19 +393,29 @@ function render(){
     top.innerHTML = '<button class="iconbtn" data-act="back" aria-label="Back">'+IC.back+'</button>'
       + '<div class="hgrow"><div class="htitle">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</div></div>'
       + '<button class="iconbtn" data-act="folder-edit" data-id="'+esc(f.id)+'" aria-label="Edit folder">'+IC.edit+'</button>';
+    const sortBtn = (N && f.id==='other' && its.length) ? '<button class="btn ghost" data-act="sort-other" style="margin-bottom:12px">Auto-sort these into folders</button>' : '';
     main.innerHTML = its.length
-      ? searchBox + chipsHtml(its) + '<div id="list"></div>' + FOOT
+      ? searchBox + chipsHtml(its) + sortBtn + '<div id="list"></div>' + FOOT
       : '<div class="empty"><div class="big">'+esc(f.emoji||'📁')+'</div><h2>No videos in '+esc(f.name)+' yet</h2>Share a video to WatchLater+ and pick this folder.</div>' + FOOT;
     renderList();
   }
   else {
-    const th = data.settings.theme || 'auto';
-    const seg = (k,l) => '<button data-act="theme" data-k="'+k+'" class="'+(th===k?'on':'')+'">'+l+'</button>';
+    const th = data.settings.theme || 'auto', rc = remindCfg(), as = autoSortOn();
+    const seg = (act,k,l,on) => '<button data-act="'+act+'" data-k="'+k+'" class="'+(on?'on':'')+'">'+l+'</button>';
+    const two = n => String(n).padStart(2,'0');
     top.innerHTML = '<div class="hgrow"><div class="htitle">Settings</div></div>';
-    main.innerHTML = '<div class="card"><h4>Look</h4><div class="seg">'+seg('auto','Auto')+seg('light','Light')+seg('dark','Dark')+'</div></div>'
+    main.innerHTML = '<div class="card"><h4>Auto-sort</h4><div class="line"><div class="grow"><b>Sort videos for me</b></div>'
+      + '<div class="seg">'+seg('autosort','on','On',as)+seg('autosort','off','Off',!as)+'</div></div>'
+      + '<p class="small">When a video\'s title matches a folder\'s words, it is saved there without asking. It also learns from the folders you pick. Edit the words from any folder\'s pencil button.</p></div>'
+      + '<div class="card"><h4>Reminder</h4><div class="line"><div class="grow"><b>Remind me every day</b></div>'
+      + '<div class="seg">'+seg('remind','on','On',rc.on)+seg('remind','off','Off',!rc.on)+'</div></div>'
+      + (rc.on ? '<input class="field" id="f-time" type="time" value="'+two(rc.h)+':'+two(rc.m)+'" aria-label="Reminder time">'
+          + '<button class="btn ghost" data-act="test-remind">Send a test reminder now</button>' : '')
+      + '<p class="small">'+(rc.on ? 'Around this time each day, if you still have videos to watch.' : 'A notification with the videos you have not watched yet.')+'</p></div>'
+      + '<div class="card"><h4>Look</h4><div class="seg">'+seg('theme','auto','Auto',th==='auto')+seg('theme','light','Light',th==='light')+seg('theme','dark','Dark',th==='dark')+'</div></div>'
       + '<div class="card"><h4>How to save a video</h4>'+STEPS.replace('class="steps"','class="steps" style="margin:0;padding:0;background:none"')+'</div>'
       + '<div class="card"><h4>About</h4><div><b>WatchLater+</b> · '+esc(VERSION)+'</div><p class="small" style="margin:6px 0 0">'
-      + data.items.length+' videos in '+data.folders.length+' folders. Everything is kept on this phone and works offline.</p></div>' + FOOT;
+      + data.items.length+' videos in '+data.folders.length+' folders. Your list is kept on this phone.</p></div>' + FOOT;
   }
 }
 
@@ -380,7 +435,8 @@ function menuSheet(id){
     + r('open',IC.play,'Watch now')
     + r('toggle',IC.check, it.watched ? 'Mark as not watched' : 'Mark as watched')
     + r('m-move',IC.move,'Move to another folder')
-    + r('m-rename',IC.edit,'Rename')
+    + r('m-rename',IC.edit,'Rename / add a note')
+    + (N ? r('m-refresh',IC.search,'Get the preview again') : '')
     + r('m-share',IC.share,'Send to someone')
     + r('m-delete',IC.trash,'Delete','hot'));
 }
@@ -390,7 +446,7 @@ function moveSheet(id){
 }
 function renameSheet(id){
   const it = item(id); if(!it) return;
-  sheet('<h2>Rename</h2><p class="sub">Give it a name you will recognise.</p><input class="field" id="f-title" maxlength="200" value="'+esc(titleOf(it))+'">'
+  sheet('<h2>Rename</h2><p class="sub">Give it a name or note you will recognise. Leave it empty to use the video\'s own title.</p><input class="field" id="f-title" maxlength="120" value="'+esc(String(it.note||'').trim() || titleOf(it))+'">'
     + '<button class="btn" data-act="save-rename" data-id="'+esc(id)+'">Save</button>');
   $('#f-title').focus();
 }
@@ -399,14 +455,23 @@ function deleteSheet(id){
   sheet('<h2>Delete this video?</h2><p class="sub">'+esc(titleOf(it))+'</p>'
     + '<button class="btn danger" data-act="do-delete" data-id="'+esc(id)+'">Yes, delete</button><button class="btn ghost" data-act="close">Keep it</button>');
 }
-let addFolder = 'other';
+let addFolder = 'other', addPicked = false;
 function addSheet(){
-  addFolder = st.view==='folder' ? st.folderId : 'other';
+  addFolder = st.view==='folder' ? st.folderId : 'other'; addPicked = st.view==='folder';
   sheet('<h2>Add a video link</h2><p class="sub">Paste a link here, or use Share in any app.</p>'
     + '<label class="lbl" for="f-url">Link</label><input class="field" id="f-url" type="url" inputmode="url" placeholder="https://..." autocomplete="off">'
     + '<label class="lbl" for="f-name">Name (optional)</label><input class="field" id="f-name" maxlength="200" placeholder="e.g. Crispy pork belly recipe" autocomplete="off">'
-    + '<span class="lbl">Folder</span><div data-add="1">'+pickHtml(addFolder)+'</div>'
+    + '<span class="lbl" id="f-flbl">Folder</span><div data-add="1">'+pickHtml(addFolder)+'</div>'
     + '<button class="btn" data-act="save-add">Save</button>');
+}
+/* While adding a link by hand: preselect the folder its words point to (until you pick one yourself). */
+function addSuggest(){
+  if(addPicked || !autoSortOn()) return;
+  const u = $('#f-url'), n = $('#f-name'); if(!u || !n) return;
+  const s = suggest(n.value, fixUrl(u.value)); if(!s || !data.folders.some(f => f.id===s.id)) return;
+  addFolder = s.id;
+  document.querySelectorAll('#sheet [data-add] button').forEach(b => b.classList.toggle('on', b.dataset.id===s.id));
+  const l = $('#f-flbl'); if(l) l.textContent = 'Folder · looks like ' + folder(s.id).name;
 }
 let editEmoji = '📁';
 function folderSheet(id){
@@ -416,6 +481,8 @@ function folderSheet(id){
   sheet('<h2>'+(f ? 'Edit folder' : 'New folder')+'</h2><p class="sub">'+(f ? 'Change the name or icon.' : 'Name it and pick an icon.')+'</p>'
     + '<label class="lbl" for="f-fname">Name</label><input class="field" id="f-fname" maxlength="30" placeholder="e.g. Travel" value="'+esc(f ? f.name : '')+'" autocomplete="off">'
     + '<span class="lbl">Icon</span><div class="emo">'+list.map(e => '<button data-act="emoji" data-e="'+esc(e)+'" class="'+(e===editEmoji?'on':'')+'">'+e+'</button>').join('')+'</div>'
+    + ((!f || f.id!=='other') ? '<label class="lbl" for="f-words">Auto-sort words</label><textarea class="field" id="f-words" maxlength="1500" placeholder="e.g. travel, vlog, beach, hotel" autocomplete="off">'+esc(f && Array.isArray(f.words) ? f.words.join(', ') : '')+'</textarea>'
+        + '<p class="help">A video with any of these words in its title goes into this folder by itself. Separate words with commas.</p>' : '')
     + '<button class="btn" data-act="save-folder" data-id="'+esc(id||'')+'">Save</button>'
     + (f && f.id!=='other' ? '<button class="btn danger" data-act="del-folder" data-id="'+esc(f.id)+'">Delete folder</button>' : ''));
   if(!f) $('#f-fname').focus();
@@ -428,9 +495,23 @@ function delFolderSheet(id){
 }
 
 /* ---------- actions ---------- */
+let askId = '', askT = 0, askArmed = '';
+function askWatched(){
+  const it = item(askArmed); askArmed = '';
+  if(!it || it.watched) return;
+  askId = it.id; $('#askbar').hidden = false;
+  clearTimeout(askT); askT = setTimeout(hideAsk, 12000);
+}
+function hideAsk(){ askId = ''; clearTimeout(askT); $('#askbar').hidden = true; }
+function parseWords(v){
+  const out = [];
+  String(v||'').split(/[,\n;]+/).forEach(w => { w = w.trim().toLowerCase().replace(/\s+/g,' '); if(w.length>1 && w.length<=30 && !out.includes(w) && out.length<120) out.push(w); });
+  return out;
+}
 function openItem(id){
   const it = item(id); if(!it) return;
   if(!/^https?:\/\//i.test(it.url)){ toast('This one has no link'); return; }
+  if(!it.watched) askArmed = id;
   if(N){ try{ N.openUrl(it.url); }catch(e){ toast('Could not open'); } }
   else window.open(it.url, '_blank', 'noopener');
 }
@@ -465,6 +546,28 @@ document.addEventListener('click', e => {
     case 'add': addSheet(); break;
     case 'demo': demo(); break;
     case 'theme': mutate(d => { d.settings.theme = el.dataset.k; }); break;
+    case 'autosort': mutate(d => { d.settings.autoSort = el.dataset.k==='on'; }); break;
+    case 'remind': {
+      const on = el.dataset.k==='on';
+      if(on && !N){ toast('Reminders work in the phone app'); break; }
+      mutate(d => { const r = remindCfg(); d.settings.remind = {on, h:r.h, m:r.m}; });
+      try{ if(N) N.remindersChanged(on); }catch(err){}
+      break;
+    }
+    case 'test-remind': try{ if(N) N.testReminder(); }catch(err){} break;
+    case 'ask-yes': { const vid = askId; hideAsk(); mutate(d => { const it = d.items.find(i => i.id===vid); if(it) it.watched = true; }); toast('Marked as watched'); break; }
+    case 'ask-no': hideAsk(); break;
+    case 'm-refresh': closeSheet(); try{ N.refreshPreview(id); toast('Getting the preview…'); }catch(err){} break;
+    case 'sort-other': {
+      let moved = 0;
+      mutate(d => { d.items.forEach(it => {
+        if(it.folderId!=='other') return;
+        const g = suggest(textOf(it), it.url);
+        if(g && g.sure && d.folders.some(f => f.id===g.id)){ it.folderId = g.id; it.manual = false; moved++; }
+      }); });
+      toast(moved ? 'Moved ' + moved + (moved===1 ? ' video' : ' videos') : 'No clear match yet. Add words to your folders.');
+      break;
+    }
     case 'm-move': moveSheet(id); break;
     case 'm-rename': renameSheet(id); break;
     case 'm-delete': deleteSheet(id); break;
@@ -480,29 +583,39 @@ document.addEventListener('click', e => {
       const mv = el.closest('[data-move]');
       if(mv){
         const vid = mv.dataset.move, f = folder(id); closeSheet();
-        mutate(d => { const it = d.items.find(i => i.id===vid); if(it) it.folderId = id; });
+        const before = item(vid);
+        mutate(d => { const it = d.items.find(i => i.id===vid); if(it){ it.folderId = id; it.manual = true; } });
+        /* you moved it by hand: remember, so similar videos go there next time */
+        try{ if(N && before && id!=='other') N.learn(textOf(before), before.url, id); }catch(err){}
         toast('Moved to ' + f.name);
       } else {
-        addFolder = id;
+        addFolder = id; addPicked = true;
         el.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b===el));
       }
       break;
     }
     case 'save-rename': {
       const v = $('#f-title').value.trim(); closeSheet();
-      mutate(d => { const it = d.items.find(i => i.id===id); if(it) it.title = v; });
+      mutate(d => { const it = d.items.find(i => i.id===id); if(it) it.note = (v===cleanShared(it.title)) ? '' : v; });
       break;
     }
-    case 'do-delete': closeSheet(); mutate(d => { d.items = d.items.filter(i => i.id!==id); }); toast('Deleted'); break;
+    case 'do-delete':
+      closeSheet(); mutate(d => { d.items = d.items.filter(i => i.id!==id); });
+      try{ if(N) N.dropPreview(id); }catch(err){}
+      toast('Deleted'); break;
     case 'save-add': {
       const url = fixUrl($('#f-url').value), name = $('#f-name').value.trim();
       if(!url){ toast('Paste a link first'); $('#f-url').focus(); break; }
       const f = folder(addFolder); closeSheet();
       mutate(d => {
         const old = d.items.find(i => i.url===url);
-        if(old){ old.folderId = f.id; old.addedAt = Date.now(); old.watched = false; if(name) old.title = name; }
-        else d.items.push({id:uid('v'), url, title:name, folderId:f.id, addedAt:Date.now(), watched:false});
+        if(old){ old.folderId = f.id; old.addedAt = Date.now(); old.watched = false; old.manual = addPicked; if(name) old.note = name; }
+        else d.items.push({id:uid('v'), url, title:name, folderId:f.id, addedAt:Date.now(), watched:false, manual:addPicked});
       });
+      try{
+        if(N && addPicked && f.id!=='other') N.learn(name, url, f.id);
+        if(N) N.fetchPreviews();
+      }catch(err){}
       toast('Saved to ' + f.name);
       break;
     }
@@ -514,11 +627,12 @@ document.addEventListener('click', e => {
       if(!name){ toast('Give the folder a name'); $('#f-fname').focus(); break; }
       const clash = data.folders.find(f => f.name.toLowerCase()===name.toLowerCase() && f.id!==id);
       if(clash){ toast('You already have a folder called ' + clash.name); break; }
+      const wEl = $('#f-words'), words = wEl ? parseWords(wEl.value) : null;
       closeSheet();
       mutate(d => {
         const f = id ? d.folders.find(x => x.id===id) : null;
-        if(f){ f.name = name; f.emoji = editEmoji; }
-        else { const at = d.folders.findIndex(x => x.id==='other'); d.folders.splice(at < 0 ? d.folders.length : at, 0, {id:uid('f'), name, emoji:editEmoji}); }
+        if(f){ f.name = name; f.emoji = editEmoji; if(words) f.words = words; }
+        else { const at = d.folders.findIndex(x => x.id==='other'); d.folders.splice(at < 0 ? d.folders.length : at, 0, {id:uid('f'), name, emoji:editEmoji, words:words||[]}); }
       });
       toast(id ? 'Folder updated' : 'Folder added');
       break;
@@ -532,6 +646,16 @@ document.addEventListener('click', e => {
   }
 });
 document.addEventListener('input', e => { if(e.target.id==='q'){ st.q = e.target.value; renderList(); } });
+document.addEventListener('change', e => {
+  const t = e.target;
+  if(t.id==='f-url' || t.id==='f-name') addSuggest();
+  if(t.id==='f-time'){
+    const m = String(t.value).match(/^(\d{1,2}):(\d{2})/); if(!m) return;
+    mutate(d => { d.settings.remind = {on:true, h:Math.min(23, +m[1]), m:Math.min(59, +m[2])}; });
+    try{ if(N) N.remindersChanged(true); }catch(err){}
+    toast('Reminder set');
+  }
+});
 document.addEventListener('keydown', e => {
   if(e.key!=='Enter') return;
   const map = {'f-title':'save-rename','f-url':'save-add','f-name':'save-add','f-fname':'save-folder'};
@@ -549,10 +673,26 @@ window.WLBack = function(){
 };
 /* Coming back to the app: pick up anything saved from the Share popup meanwhile. */
 window.WLResume = function(){
+  if(askArmed) askWatched();
+  try{ if(N && N.fetchPreviews) N.fetchPreviews(); }catch(e){}
   if(sheetOpen) return;
-  const a = document.activeElement; if(a && a.id==='q') return;
-  data = loadData(); render();
+  const a = document.activeElement; if(a && (a.id==='q' || a.id==='f-time')) return;
+  data = loadData(); pv = loadPv(); render();
 };
+/* A title or thumbnail arrived in the background. */
+window.WLPreviews = function(){ pv = loadPv(); renderList(); };
+/* The reminder was tapped: open the list of videos still to watch. */
+window.WLShow = function(list){
+  closeSheet(); st.view = 'home'; st.q = ''; st.filter = list==='towatch' ? 'towatch' : 'all';
+  data = loadData(); pv = loadPv(); render(); $('#main').scrollTop = 0;
+};
+/* Notifications are blocked for the app: switch the reminder back off and say why. */
+window.WLNotifyDenied = function(){
+  mutate(d => { const r = remindCfg(); d.settings.remind = {on:false, h:r.h, m:r.m}; });
+  toast('Allow notifications for WatchLater+ in your phone settings first');
+};
+if(!N) document.addEventListener('visibilitychange', () => { if(!document.hidden && askArmed) askWatched(); });
+try{ if(N && N.fetchPreviews) N.fetchPreviews(); }catch(e){}
 
 render();
 </script>
