@@ -1,4 +1,9 @@
-# The web version of WatchLater+ lives in web/ (the Android app is built by GitHub Actions)
+# The web version of WatchLater+ lives in web/ (the Android app is built by GitHub Actions).
+# netlify/functions holds its two small helpers: preview (titles and thumbnails) and inbox (iPhone Share menu).
 [build]
   publish = "web"
   command = ""
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"

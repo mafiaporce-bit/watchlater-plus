@@ -20,3 +20,10 @@ It is made from the phone app's page: after changing `app/src/main/assets/index.
     python3 tools/make_web.py
 
 Netlify publishes the `web/` folder (see `netlify.toml`). To upload by hand instead, drag the `web` folder onto Netlify's Deploys page.
+
+### The web version's two helpers (Netlify Functions)
+
+- `netlify/functions/preview.mjs`: finds a video's title and thumbnail (a web page cannot read Facebook, TikTok or Instagram itself). The app shrinks the picture and keeps it on the phone, so it also shows offline.
+- `netlify/functions/inbox.mjs`: a small private inbox (Netlify Blobs) for links shared from the iPhone Share menu through a Shortcut. The app collects them when it opens. Set it up from Settings in the web app.
+
+Their logic lives in `netlify/shared/` so it can be tested without Netlify.

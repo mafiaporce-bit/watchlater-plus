@@ -278,10 +278,14 @@ function saveData(d){
 }
 let data = loadData();
 /* Titles and thumbnails the phone fetched in the background, keyed by video id. */
+const PV_KEY = 'watchlater_previews';
 function loadPv(){
-  if(!N || !N.getPreviews) return {};
-  try{ const o = JSON.parse(N.getPreviews()); return o && typeof o==='object' ? o : {}; }catch(e){ return {}; }
+  try{
+    const raw = N ? (N.getPreviews ? N.getPreviews() : '{}') : localStorage.getItem(PV_KEY);
+    const o = JSON.parse(raw || '{}'); return o && typeof o==='object' && !Array.isArray(o) ? o : {};
+  }catch(e){ return {}; }
 }
+function savePv(){ if(N) return; try{ localStorage.setItem(PV_KEY, JSON.stringify(pv)); }catch(e){} }
 let pv = loadPv();
 /* Icons of the apps installed on the phone (Facebook, TikTok...), keyed like srcOf(). */
 function loadIcons(){
@@ -289,6 +293,131 @@ function loadIcons(){
   try{ const o = JSON.parse(N.appIcons()); return o && typeof o==='object' ? o : {}; }catch(e){ return {}; }
 }
 let appIc = loadIcons();
+
+/* ---------- web version: titles and thumbnails ----------
+   A web page may not read Facebook or TikTok itself, so the site's small helper looks the video
+   up and hands back its title and picture. The picture is shrunk and kept on the phone, so it
+   still shows with no internet. */
+const HELPER = '/.netlify/functions/';
+const THUMBS = 'wl-thumbs';
+const thumbNow = {};               // video id -> picture address, for pictures loaded in this visit
+const pvBusy = new Set(); let pvQueue = [], pvRunning = 0, helperDown = 0;
+const thumbPath = id => new URL('thumbs/' + encodeURIComponent(id) + '.jpg', location.href).href;
+function fetchPreviews(){
+  if(N){ try{ if(N.fetchPreviews) N.fetchPreviews(); }catch(e){} return; }
+  if(!WEB || !navigator.onLine || Date.now() - helperDown < 5*60000) return;
+  const now = Date.now();
+  data.items.slice().sort((a,b) => (b.addedAt||0) - (a.addedAt||0)).forEach(it => {
+    const p = pv[it.id] || {}, yt = srcOf(it.url).k==='yt';
+    const have = yt ? !!(p.t || cleanShared(it.title) || String(it.note||'').trim()) : !!(p.t && p.i);
+    if(have) return;
+    if(p.a && ((p.n||0) >= 3 || now - p.a < 6*3600000)) return;   /* tried: again in 6 hours, 3 times at most */
+    queuePreview(it.id);
+  });
+}
+function queuePreview(id){ if(pvBusy.has(id)) return; pvBusy.add(id); pvQueue.push(id); pumpPreviews(); }
+function pumpPreviews(){
+  while(pvRunning < 2 && pvQueue.length){
+    const id = pvQueue.shift(); pvRunning++;
+    onePreview(id).catch(() => {}).then(() => { pvRunning--; pvBusy.delete(id); pumpPreviews(); });
+  }
+}
+async function onePreview(id){
+  const it = item(id) || (incPending && incPending.id===id ? incPending : null); if(!it) return;
+  let r = null;
+  try{
+    const res = await fetch(HELPER + 'preview?url=' + encodeURIComponent(it.url), {cache:'no-store'});
+    if(res.ok) r = await res.json();
+  }catch(e){}
+  const p = Object.assign({}, pv[id]);
+  if(!r || r.ok===false){
+    /* the helper is missing or could not get out: leave it for later */
+    if(!r){ helperDown = Date.now(); pvQueue = []; }
+    p.g = r ? String(r.g||'') : 'The helper did not answer';
+    pv[id] = p; savePv(); afterPreview(id); return;
+  }
+  p.a = Date.now(); p.n = (p.n||0) + 1; p.g = String(r.g||'').slice(0,400);
+  if(r.t) p.t = String(r.t).slice(0,200);
+  if(r.d) p.d = String(r.d).slice(0,300);
+  if(r.i){
+    try{
+      const blob = await shrinkPicture(String(r.i));
+      if(thumbNow[id]) URL.revokeObjectURL(thumbNow[id]);
+      thumbNow[id] = URL.createObjectURL(blob);
+      if(await keepThumb(id, blob)) p.i = 1;
+    }catch(e){ p.g += '; this browser could not open the picture'; }
+  }
+  pv[id] = p; savePv();
+  afterPreview(id);
+}
+function shrinkPicture(src){
+  return new Promise((ok, no) => {
+    const im = new Image();
+    im.onload = () => {
+      try{
+        const w = Math.min(480, im.naturalWidth), h = Math.max(1, Math.round(im.naturalHeight * w / im.naturalWidth));
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(im, 0, 0, w, h);
+        c.toBlob(b => b ? ok(b) : no(new Error('blob')), 'image/jpeg', 0.82);
+      }catch(e){ no(e); }
+    };
+    im.onerror = () => no(new Error('image'));
+    im.src = src;
+  });
+}
+async function keepThumb(id, blob){
+  if(!('caches' in window)) return false;
+  try{
+    const c = await caches.open(THUMBS);
+    await c.put(new Request(thumbPath(id)), new Response(blob, {headers:{'content-type':'image/jpeg'}}));
+    return true;
+  }catch(e){ return false; }
+}
+function dropPreview(id){
+  delete pv[id]; savePv();
+  if(thumbNow[id]){ URL.revokeObjectURL(thumbNow[id]); delete thumbNow[id]; }
+  if('caches' in window) caches.open(THUMBS).then(c => c.delete(thumbPath(id))).catch(() => {});
+}
+/* Forget previews of videos that were deleted, or shared but never saved. */
+function prunePreviews(){
+  const live = new Set(data.items.map(i => i.id)); let changed = false;
+  Object.keys(pv).forEach(id => { if(!live.has(id) && !(incPending && incPending.id===id)){ delete pv[id]; changed = true; } });
+  if(changed) savePv();
+  if('caches' in window) caches.open(THUMBS).then(c => c.keys().then(keys => keys.forEach(req => {
+    const m = /\/thumbs\/([^/?]+)\.jpg/.exec(req.url);
+    if(m && !live.has(decodeURIComponent(m[1])) && !(incPending && incPending.id===decodeURIComponent(m[1]))) c.delete(req);
+  }))).catch(() => {});
+}
+/* First visit (before the offline helper is running): load the kept pictures ourselves. */
+function hydrateThumbs(){
+  if(!('caches' in window) || (navigator.serviceWorker && navigator.serviceWorker.controller)) return;
+  caches.open(THUMBS).then(async c => {
+    let any = false;
+    for(const it of data.items){
+      if(thumbNow[it.id] || !(pv[it.id] && pv[it.id].i)) continue;
+      const hit = await c.match(thumbPath(it.id)); if(!hit) continue;
+      thumbNow[it.id] = URL.createObjectURL(await hit.blob()); any = true;
+    }
+    if(any) renderList();
+  }).catch(() => {});
+}
+/* A title or picture arrived: sort the video if it was waiting in Other, learn from a folder picked by hand. */
+function afterPreview(id){
+  if(incPending && incPending.id===id){ incLooked(); return; }
+  const it = item(id), p = pv[id] || {}; if(!it) return;
+  const words = [p.t, p.d].filter(Boolean).join(' ');
+  if(words && it.folderId==='other' && !it.manual && autoSortOn()){
+    const g = suggest(textOf(it), it.url);
+    if(g && g.sure && data.folders.some(f => f.id===g.id)){
+      const d = loadData(), x = d.items.find(i => i.id===id);
+      if(x){ x.folderId = g.id; saveData(d); data = d; }
+    }
+  } else if(words && it.manual && it.folderId!=='other' && !p.l){
+    learnIt(words, it.url, it.folderId, 1); p.l = true; savePv();
+  }
+  const a = document.activeElement;
+  if(sheetOpen || (a && a.id==='q') || st.view==='settings') renderList(); else render();
+}
 /* ---------- auto-sort for the web version (same rules as the phone app's Sorter.java) ---------- */
 const SORT = (() => {
   const STOP = new Set(('the and for with this that you your how from what when why who are was were will can not but all any out '
@@ -354,8 +483,8 @@ const SORT = (() => {
   return {suggest, learn, tokens, hostToken};
 })();
 /* You picked a folder by hand: remember it so similar videos go there next time. */
-function learnIt(text, url, folderId){
-  try{ if(N) N.learn(text, url, folderId); else SORT.learn(text, url, folderId, 2); }catch(e){}
+function learnIt(text, url, folderId, weight){
+  try{ if(N) N.learn(text, url, folderId); else SORT.learn(text, url, folderId, weight || 2); }catch(e){}
 }
 function suggest(text, url){
   if(!N) return SORT.suggest(String(text||''), String(url||''), data.folders);
@@ -476,7 +605,8 @@ function itemHtml(it, lay){
   const tile = '<span class="tile '+s.k+'"><span class="tname">'+esc(s.name)+'</span></span>';
   const p = pv[it.id];
   const src = y ? 'https://i.ytimg.com/vi/'+y+'/'+(lay==='list' ? 'mqdefault' : 'hqdefault')+'.jpg'
-    : (p && p.i ? 'https://appassets.androidplatform.net/thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '');
+    : N ? (p && p.i ? 'https://appassets.androidplatform.net/thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '')
+    : (thumbNow[it.id] || (p && p.i ? 'thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : ''));
   const img = src ? '<img src="'+esc(src)+'" alt="" loading="lazy" onerror="this.remove()">' : '';
   const under = underTitle(it);
   const ar = lay==='list' ? '' : ' style="--ar:'+(isTall(it.url) ? (lay==='big' ? '4/5' : '3/4') : '16/10')+'"';
@@ -578,7 +708,7 @@ function render(){
     main.innerHTML = '<div class="card"><h4>Auto-sort</h4><div class="line"><div class="grow"><b>Sort videos for me</b></div>'
       + '<div class="seg">'+seg('autosort','on','On',as)+seg('autosort','off','Off',!as)+'</div></div>'
       + '<p class="small">When a video\'s title matches a folder\'s words, it is saved there without asking. It also learns from the folders you pick. Edit the words from any folder\'s pencil button.</p></div>'
-      + (WEB ? WEB_INSTALL : '<div class="card"><h4>Floating button</h4><div class="line"><div class="grow"><b>Save button over other apps</b></div>'
+      + (WEB ? webCards() : '<div class="card"><h4>Floating button</h4><div class="line"><div class="grow"><b>Save button over other apps</b></div>'
       + '<div class="seg">'+seg('bubble','on','On',bub)+seg('bubble','off','Off',!bub)+'</div></div>'
       + '<p class="small">In Facebook, TikTok or YouTube tap <b>Share</b>, then <b>Copy link</b>, then tap the round WatchLater+ button. Drag it to move it. Press and hold it to turn it off.</p>'
       + (bub ? '' : '<p class="small">The first time, your phone asks you to allow <b>Appear on top</b>. If that switch is greyed out, open the phone\'s Settings, Apps, WatchLater+, tap the three dots at the top right and choose <b>Allow restricted settings</b>, then try again.</p>')
@@ -611,13 +741,13 @@ function menuSheet(id){
   const r = (act,ic,l,cls) => '<button class="row '+(cls||'')+'" data-act="'+act+'" data-id="'+esc(id)+'">'+ic+l+'</button>';
   /* what happened when the app looked for this video's title and picture (helps when one is missing) */
   const pr = pv[id] || {};
-  const check = !N ? '' : 'Preview check: ' + (pr.g ? pr.g : (pr.a ? 'done' : 'not tried yet')) + (it.dbg ? ' · Shared with: ' + it.dbg : '');
+  const check = !(N || WEB) ? '' : 'Preview check: ' + (pr.g ? pr.g : (pr.a ? 'done' : 'not tried yet')) + (it.dbg ? ' · Shared with: ' + it.dbg : '');
   sheet('<h2>'+esc(titleOf(it))+'</h2><p class="sub">'+esc(it.url)+'</p>'
     + r('open',IC.play,'Watch now')
     + r('toggle',IC.check, it.watched ? 'Mark as not watched' : 'Mark as watched')
     + r('m-move',IC.move,'Move to another folder')
     + r('m-rename',IC.edit,'Rename / add a note')
-    + (N ? r('m-refresh',IC.search,'Get the preview again') : '')
+    + ((N || WEB) ? r('m-refresh',IC.search,'Get the preview again') : '')
     + r('m-share',IC.share,'Send to someone')
     + r('m-delete',IC.trash,'Delete','hot')
     + (check ? '<p class="dbg">'+esc(check)+'</p>' : ''));
@@ -727,7 +857,27 @@ document.addEventListener('click', e => {
     case 'open': closeSheet(); openItem(id); break;
     case 'toggle': closeSheet(); mutate(d => { const it = d.items.find(i => i.id===id); if(it) it.watched = !it.watched; }); break;
     case 'menu': menuSheet(id); break;
-    case 'close': incPending = null; closeSheet(); break;
+    case 'close': {
+      /* closing the "which folder?" question still keeps the video: it goes to Other */
+      const pend = incPending && $('#inc-look') ? incPending : null;
+      if(!pend) incPending = null;
+      closeSheet();
+      if(pend) saveIncoming(pend.url, pend.title, '', 'other');
+      break;
+    }
+    case 'inbox-on': mutate(d => { d.settings.inbox = newCode(); }); inboxSteps(); break;
+    case 'inbox-how': inboxSteps(); break;
+    case 'inbox-off': mutate(d => { delete d.settings.inbox; }); toast('Turned off'); break;
+    case 'inbox-check': inboxCheck(true); break;
+    case 'inbox-copy': {
+      const link = inboxLink();
+      (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(link) : Promise.reject())
+        .then(() => toast('Link copied'))
+        .catch(() => { sheet('<h2>Your link</h2><p class="sub">Press and hold it, then choose Copy.</p><textarea class="field" readonly style="min-height:120px">'+esc(link)+'</textarea><button class="btn ghost" data-act="close">Close</button>'); });
+      break;
+    }
+    case 'backup': backupFile(); break;
+    case 'restore': { const f = $('#f-restore'); if(f){ f.value = ''; f.click(); } break; }
     case 'add': addSheet(); break;
     case 'paste': {
       navigator.clipboard.readText().then(t => {
@@ -760,7 +910,12 @@ document.addEventListener('click', e => {
     case 'test-remind': try{ if(N) N.testReminder(); }catch(err){} break;
     case 'ask-yes': { const vid = askId; hideAsk(); mutate(d => { const it = d.items.find(i => i.id===vid); if(it) it.watched = true; }); toast('Marked as watched'); break; }
     case 'ask-no': hideAsk(); break;
-    case 'm-refresh': closeSheet(); try{ N.refreshPreview(id); toast('Getting the preview…'); }catch(err){} break;
+    case 'm-refresh':
+      closeSheet();
+      if(N){ try{ N.refreshPreview(id); toast('Getting the preview…'); }catch(err){} }
+      else if(!navigator.onLine) toast('No internet right now');
+      else { if(pv[id]){ delete pv[id].a; delete pv[id].n; } queuePreview(id); toast('Getting the preview…'); }
+      break;
     case 'sort-other': {
       let moved = 0;
       mutate(d => { d.items.forEach(it => {
@@ -805,7 +960,7 @@ document.addEventListener('click', e => {
     }
     case 'do-delete':
       closeSheet(); mutate(d => { d.items = d.items.filter(i => i.id!==id); });
-      try{ if(N) N.dropPreview(id); }catch(err){}
+      try{ if(N) N.dropPreview(id); else dropPreview(id); }catch(err){}
       toast('Deleted'); break;
     case 'save-add': {
       const url = fixUrl($('#f-url').value), name = $('#f-name').value.trim();
@@ -818,7 +973,7 @@ document.addEventListener('click', e => {
       });
       try{
         if(addPicked && f.id!=='other') learnIt(name, url, f.id);
-        if(N) N.fetchPreviews();
+        fetchPreviews();
       }catch(err){}
       toast('Saved to ' + f.name);
       break;
@@ -855,6 +1010,12 @@ document.addEventListener('input', e => { if(e.target.id==='q'){ st.q = e.target
 document.addEventListener('change', e => {
   const t = e.target;
   if(t.id==='f-url' || t.id==='f-name') addSuggest();
+  if(t.id==='f-restore' && t.files && t.files[0]){
+    const fr = new FileReader();
+    fr.onload = () => restoreFrom(String(fr.result || ''));
+    fr.onerror = () => toast('Could not read that file');
+    fr.readAsText(t.files[0]);
+  }
   if(t.id==='f-time'){
     const m = String(t.value).match(/^(\d{1,2}):(\d{2})/); if(!m) return;
     mutate(d => { d.settings.remind = {on:true, h:Math.min(23, +m[1]), m:Math.min(59, +m[2])}; });
@@ -880,7 +1041,7 @@ window.WLBack = function(){
 /* Coming back to the app: pick up anything saved from the Share popup meanwhile. */
 window.WLResume = function(){
   if(askArmed) askWatched();
-  try{ if(N && N.fetchPreviews) N.fetchPreviews(); }catch(e){}
+  fetchPreviews();
   if(sheetOpen) return;
   const a = document.activeElement; if(a && (a.id==='q' || a.id==='f-time')) return;
   data = loadData(); pv = loadPv(); appIc = loadIcons(); render();
@@ -917,35 +1078,193 @@ function incoming(){
   saveIncoming(url, title, '');
 }
 /* Save it: to the folder you picked, the folder it already had, or the one auto-sort is sure of. Else ask. */
-function saveIncoming(url, title, picked){
+function saveIncoming(url, title, picked, auto){
   const old = data.items.find(i => i.url===url);
-  const g = (!picked && !old && autoSortOn()) ? suggest(title, url) : null;
-  const fid = picked || (old && old.folderId) || (g && g.sure && data.folders.some(f => f.id===g.id) ? g.id : '');
+  const g = (!picked && !auto && !old && autoSortOn()) ? suggest(title, url) : null;
+  const fid = picked || (old && old.folderId) || auto || (g && g.sure && data.folders.some(f => f.id===g.id) ? g.id : '');
   if(!fid){
-    incPending = {url, title};
+    /* not sure: ask, and meanwhile look the video up (its title often settles it) */
+    const look = WEB && navigator.onLine;
+    incPending = {id:uid('v'), url, title};
     const hint = g && data.folders.some(f => f.id===g.id) ? g.id : '';
-    sheet('<h2>Save to which folder?</h2><p class="sub">'+esc(title || url)+'</p><div data-inc="1">'+pickHtml(hint)+'</div>'
+    sheet('<h2>Save to which folder?</h2><p class="sub" id="inc-sub">'+esc(title || url)+'</p>'
+      + '<p class="help" id="inc-look">'+(look ? 'Looking at the video…' : '')+'</p><div data-inc="1">'+pickHtml(hint)+'</div>'
       + '<button class="btn ghost" data-act="new-from-inc">'+IC.plus+'New folder</button>');
+    if(look) queuePreview(incPending.id);
     return;
   }
+  const pend = incPending && incPending.url===url ? incPending : null;
   incPending = null;
-  let id = old ? old.id : uid('v');
+  let id = old ? old.id : (pend ? pend.id : uid('v'));
   mutate(d => {
     const o = d.items.find(i => i.url===url);
     if(o){ o.addedAt = Date.now(); o.watched = false; if(picked){ o.folderId = picked; o.manual = true; } if(title && !o.title) o.title = title; id = o.id; }
     else d.items.push({id, url, title, folderId:fid, addedAt:Date.now(), watched:false, manual:!!picked});
   });
-  if(picked && picked!=='other' && title) learnIt(title, url, picked);
+  const p = pv[id] || {};
+  if(picked && picked!=='other'){
+    const words = [title, p.t, p.d].filter(Boolean).join(' ');
+    if(words){ learnIt(words, url, picked); if(pv[id]){ pv[id].l = true; savePv(); } }
+  }
   const f = folder(fid);
   st.view = 'home'; st.filter = 'all'; st.q = ''; render();
-  sheet('<h2>'+(old ? 'Already saved · ' : 'Saved to ')+esc(f.emoji||'📁')+' '+esc(f.name)+'</h2><p class="sub">'+esc(title || url)+'</p>'
+  sheet('<h2>'+(old ? 'Already saved · ' : 'Saved to ')+esc(f.emoji||'📁')+' '+esc(f.name)+'</h2><p class="sub">'+esc(title || p.t || url)+'</p>'
     + '<button class="btn" data-act="close">Done</button><button class="btn ghost" data-act="m-move" data-id="'+esc(id)+'">Change folder</button>');
+  fetchPreviews();
 }
-if(!N) document.addEventListener('visibilitychange', () => { if(!document.hidden && askArmed) askWatched(); });
-try{ if(N && N.fetchPreviews) N.fetchPreviews(); }catch(e){}
+/* The video being asked about has been looked up: save it if its title makes the folder clear, else show a hint. */
+function incLooked(){
+  const pend = incPending, look = $('#inc-look'); if(!pend || !sheetOpen || !look) return;
+  const p = pv[pend.id] || {}, words = [p.t, p.d].filter(Boolean).join(' ');
+  if(!words){ look.textContent = ''; return; }
+  const g = autoSortOn() ? suggest(words, pend.url) : null, okf = !!g && data.folders.some(f => f.id===g.id);
+  if(okf && g.sure){ saveIncoming(pend.url, pend.title, '', g.id); return; }
+  const sub = $('#inc-sub'); if(sub && p.t) sub.textContent = p.t;
+  look.textContent = okf ? 'Looks like ' + folder(g.id).name : '';
+  if(okf) document.querySelectorAll('#sheet [data-inc] button').forEach(b => b.classList.toggle('on', b.dataset.id===g.id));
+}
 
+/* ---------- web version: links sent from the iPhone Share menu ----------
+   The Home Screen app and Safari keep separate lists on iPhone, so a Shortcut hands the link to
+   a small private inbox on the site, and the app collects it here the next time it opens. */
+function inboxCode(){ const k = data.settings.inbox; return typeof k==='string' && /^[A-Za-z0-9]{16,40}$/.test(k) ? k : ''; }
+function newCode(){
+  const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789', n = new Uint8Array(24);
+  crypto.getRandomValues(n);
+  return Array.from(n, x => abc[x % abc.length]).join('');
+}
+const inboxLink = () => location.origin + HELPER + 'inbox?k=' + inboxCode() + '&add=';
+let inboxBusy = false;
+async function inboxCheck(loud){
+  const k = inboxCode();
+  if(!WEB || !k || inboxBusy){ return; }
+  if(!navigator.onLine){ if(loud) toast('No internet right now'); return; }
+  const a = document.activeElement;
+  if(!loud && (sheetOpen || (a && a.id==='q'))) return;      /* not while you are in the middle of something */
+  inboxBusy = true;
+  try{
+    const res = await fetch(HELPER + 'inbox?k=' + k + '&list=1', {cache:'no-store'});
+    if(!res.ok) throw new Error('inbox');
+    const j = await res.json(), rows = Array.isArray(j.items) ? j.items : [];
+    let added = 0, last = 0;
+    if(rows.length){
+      mutate(d => rows.forEach((r, n) => {
+        last = Math.max(last, Number(r.a) || 0);
+        const url = fixUrl(r.u); if(!url) return;
+        const old = d.items.find(i => i.url===url);
+        if(old){ old.addedAt = Date.now(); old.watched = false; added++; return; }
+        d.items.push({id:uid('v') + n, url, title:'', folderId:'other', addedAt:Number(r.a) || Date.now(), watched:false, manual:false});
+        added++;
+      }));
+      await fetch(HELPER + 'inbox?k=' + k + '&done=' + last, {cache:'no-store'}).catch(() => {});
+      fetchPreviews();     /* once a title arrives the video sorts itself into its folder */
+    }
+    if(added) toast(added + (added===1 ? ' new video' : ' new videos') + ' from the Share menu');
+    else if(loud) toast('No new links waiting');
+  }catch(e){ if(loud) toast('Could not check right now'); }
+  inboxBusy = false;
+}
+function inboxSteps(){
+  const li = (n, t) => '<div><i>'+n+'</i><span>'+t+'</span></div>';
+  sheet('<h2>Share menu on iPhone</h2><p class="sub">Do this once, on the iPhone.</p><div class="steps" style="margin:0 0 14px">'
+    + li(1,'Tap <b>Copy my link</b> below.')
+    + li(2,'Open the <b>Shortcuts</b> app and tap <b>+</b> at the top.')
+    + li(3,'Tap the name at the top, choose <b>Rename</b> and call it <b>WatchLater+</b>.')
+    + li(4,'Tap the <b>ⓘ</b> button at the bottom, switch on <b>Show in Share Sheet</b>, then tap <b>Done</b>.')
+    + li(5,'Tap <b>Search Actions</b>, find <b>Get Contents of URL</b> and add it.')
+    + li(6,'Tap the grey word <b>URL</b> and <b>Paste</b> your link. Then tap <b>Shortcut Input</b> in the row above the keyboard, so it sits right after the link.')
+    + li(7,'Tap <b>Done</b>.')
+    + '</div><p class="help" style="margin:0 2px 14px">After that: in any app tap <b>Share</b>, then <b>WatchLater+</b> (in Facebook and TikTok tap <b>More</b> first). The video is here the next time you open WatchLater+.</p>'
+    + '<button class="btn" data-act="inbox-copy">Copy my link</button><button class="btn ghost" data-act="close">Close</button>');
+}
+function webCards(){
+  const k = inboxCode();
+  return WEB_INSTALL
+    + '<div class="card"><h4>Share menu on iPhone</h4>'
+    + (k ? '<p class="small" style="margin-top:0">It is on. Videos you share to WatchLater+ from other apps land here when you open the app.</p>'
+          + '<button class="btn" data-act="inbox-how" style="margin-top:12px">Show the set-up steps</button>'
+          + '<button class="btn ghost" data-act="inbox-copy">Copy my link</button>'
+          + '<button class="btn ghost" data-act="inbox-check">Check for new videos now</button>'
+          + '<button class="btn danger" data-act="inbox-off">Turn it off</button>'
+          + '<p class="small">The link is private to you. Anyone who has it can add videos to your list, so do not post it.</p>'
+        : '<p class="small" style="margin-top:0">Make WatchLater+ show up when you tap <b>Share</b> in Facebook, TikTok or YouTube on an iPhone. You set it up once and it takes about two minutes.</p>'
+          + '<button class="btn" data-act="inbox-on" style="margin-top:12px">Set it up</button>')
+    + '</div>'
+    + '<div class="card"><h4>Backup</h4><p class="small" style="margin-top:0">Save your whole list to a file, or bring it back, for example on a new phone.</p>'
+    + '<button class="btn ghost" data-act="backup" style="margin-top:12px">Save a backup file</button>'
+    + '<button class="btn ghost" data-act="restore">Bring back from a file</button>'
+    + '<input type="file" id="f-restore" accept=".json,application/json,text/plain" hidden></div>';
+}
+
+/* ---------- web version: backup and restore ---------- */
+const LEARN_KEY = 'watchlater_learned';
+function backupFile(){
+  let learned = {}; try{ learned = JSON.parse(localStorage.getItem(LEARN_KEY) || '{}') || {}; }catch(e){}
+  const previews = {};
+  data.items.forEach(it => { const p = pv[it.id]; if(p && (p.t || p.d)) previews[it.id] = {t:p.t || '', d:p.d || ''}; });
+  const d = JSON.parse(JSON.stringify(data));
+  if(d.settings) delete d.settings.inbox;                    /* the private share link stays on this phone */
+  const text = JSON.stringify({app:'watchlater-plus', v:1, when:new Date().toISOString(), data:d, learned, previews});
+  const name = 'watchlater-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  let file = null; try{ file = new File([text], name, {type:'application/json'}); }catch(e){}
+  if(file && navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file], title:'WatchLater+ backup'}).catch(() => {});
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type:'application/json'})); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+  toast('Backup file saved (' + data.items.length + ' videos)');
+}
+/* Adds what is in the file to the list here. Nothing already on this phone is removed or changed. */
+function restoreFrom(text){
+  let b = null; try{ b = JSON.parse(text); }catch(e){}
+  if(!b || b.app!=='watchlater-plus' || !b.data || !Array.isArray(b.data.items)){ toast('That is not a WatchLater+ backup file'); return; }
+  const src = normalize(b.data), map = {}; let added = 0;
+  mutate(d => {
+    src.folders.forEach(f => {
+      if(d.folders.some(x => x.id===f.id)){ map[f.id] = f.id; return; }
+      const name = String(f.name || 'Folder').slice(0,30), same = d.folders.find(x => x.name.toLowerCase()===name.toLowerCase());
+      if(same){ map[f.id] = same.id; return; }
+      const at = d.folders.findIndex(x => x.id==='other');
+      d.folders.splice(at < 0 ? d.folders.length : at, 0, {id:f.id, name, emoji:String(f.emoji || '📁'), words:Array.isArray(f.words) ? f.words.filter(w => typeof w==='string').slice(0,120) : []});
+      map[f.id] = f.id;
+    });
+    src.items.forEach(it => {
+      const url = fixUrl(it.url); if(!url || d.items.some(x => x.url===url)) return;
+      let id = it.id; if(d.items.some(x => x.id===id)) id = uid('v') + added;
+      const row = {id, url, title:String(it.title || '').slice(0,200), folderId:map[it.folderId] || 'other', addedAt:Number(it.addedAt) || Date.now(), watched:!!it.watched, manual:!!it.manual};
+      if(it.note) row.note = String(it.note).slice(0,200);
+      d.items.push(row);
+      const p = b.previews && b.previews[it.id];
+      if(p && !pv[id]) pv[id] = {t:String(p.t || '').slice(0,200), d:String(p.d || '').slice(0,300)};
+      added++;
+    });
+  });
+  savePv();
+  if(b.learned && typeof b.learned==='object'){
+    let mine = {}; try{ mine = JSON.parse(localStorage.getItem(LEARN_KEY) || '{}') || {}; }catch(e){}
+    Object.keys(b.learned).slice(0,3000).forEach(tok => {
+      const m = b.learned[tok]; if(!m || typeof m!=='object') return;
+      const t = mine[tok] || (mine[tok] = {});
+      Object.keys(m).forEach(fid => { const n = Math.min(99, Number(m[fid]) || 0), to = map[fid] || fid; if(n > 0) t[to] = Math.max(t[to] || 0, n); });
+    });
+    try{ localStorage.setItem(LEARN_KEY, JSON.stringify(mine)); }catch(e){}
+  }
+  render(); fetchPreviews();
+  toast(added ? 'Brought back ' + added + (added===1 ? ' video' : ' videos') : 'Everything in that file is already here');
+}
+if(!N) document.addEventListener('visibilitychange', () => {
+  if(document.hidden) return;
+  if(askArmed) askWatched();
+  fetchPreviews(); inboxCheck(false);
+});
+if(!N) window.addEventListener('online', () => { fetchPreviews(); inboxCheck(false); });
 render();
 incoming();
+fetchPreviews();
+if(WEB){ prunePreviews(); hydrateThumbs(); inboxCheck(false); }
 </script>
 </body>
 </html>

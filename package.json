@@ -1,0 +1,8 @@
+{
+  "name": "watchlater-plus-web",
+  "private": true,
+  "description": "Helpers for the web version of WatchLater+ (Netlify Functions)",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}

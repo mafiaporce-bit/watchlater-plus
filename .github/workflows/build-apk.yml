@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     # the web version (web/) is published by Netlify, no APK needed for it
-    paths-ignore: [ 'web/**', 'netlify.toml', 'tools/make_web.py' ]
+    paths-ignore: [ 'web/**', 'netlify/**', 'netlify.toml', 'package.json', 'tools/make_web.py' ]
   workflow_dispatch:
 
 permissions:

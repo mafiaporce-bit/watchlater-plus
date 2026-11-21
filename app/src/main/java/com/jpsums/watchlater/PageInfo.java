@@ -19,6 +19,8 @@ public final class PageInfo {
     public String image = "";
     /** A second place to look for the picture (TikTok's player page), tried if the first one fails. */
     public String alt = "";
+    /** True when a site's info service described a creator's profile rather than a video. */
+    public boolean profile = false;
 
     private static final Pattern META = Pattern.compile("<meta\\b[^>]*>", Pattern.CASE_INSENSITIVE);
     private static final Pattern ATTR = Pattern.compile(

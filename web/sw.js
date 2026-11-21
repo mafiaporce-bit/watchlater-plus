@@ -1,9 +1,10 @@
 /* WatchLater+ web: keeps the app on the phone so it opens with no internet. */
-const VERSION = 'wl-603945337a';
+const VERSION = 'wl-f88ba59625';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png',
   './icon-maskable-512.png', './apple-touch-icon.png'];
 const PICS = 'wl-pics';          // YouTube thumbnails seen before, so they show offline too
 const MAX_PICS = 300;
+const THUMBS = 'wl-thumbs';      // thumbnails the app fetched and shrank itself (Facebook, TikTok...)
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -11,7 +12,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== VERSION && k !== PICS).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => k !== VERSION && k !== PICS && k !== THUMBS).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
@@ -48,7 +49,12 @@ self.addEventListener('fetch', e => {
   const url = new URL(req.url);
   if (req.mode === 'navigate' && url.origin === location.origin) { e.respondWith(page(req)); return; }
   if (url.hostname === 'i.ytimg.com') { e.respondWith(picture(req)); return; }
-  if (url.origin === location.origin) {
-    e.respondWith(caches.match(req, {ignoreSearch: true}).then(hit => hit || fetch(req)));
+  if (url.origin !== location.origin) return;
+  if (url.pathname.includes('/.netlify/')) return;            // the site's helpers always go to the network
+  if (url.pathname.includes('/thumbs/')) {
+    e.respondWith(caches.open(THUMBS).then(c => c.match(req, {ignoreSearch: true}))
+      .then(hit => hit || new Response('', {status: 404})));
+    return;
   }
+  e.respondWith(caches.open(VERSION).then(c => c.match(req, {ignoreSearch: true})).then(hit => hit || fetch(req)));
 });
