@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WatchLater+: a dark play button with a small plus -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#17161C"
+        android:strokeColor="#17161C" android:strokeWidth="6"
+        android:strokeLineJoin="round"
+        android:pathData="M44,40L44,70L70,55z" />
+    <path android:strokeColor="#17161C" android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M71,31L71,43M65,37L77,37" />
+</vector>

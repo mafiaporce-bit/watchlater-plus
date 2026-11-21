@@ -1,0 +1,77 @@
+name: Build WatchLater+ APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Only the newest push gets built and published
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Use preinstalled Android SDK
+        run: |
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=/usr/local/lib/android/sdk" >> $GITHUB_ENV
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build APK
+        run: |
+          set -o pipefail
+          gradle :app:assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+
+      - name: Rename APK
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk WatchLaterPlus.apk
+          echo "{\"versionCode\": $((GITHUB_RUN_NUMBER + 1)), \"versionName\": \"1.$GITHUB_RUN_NUMBER\"}" > version.json
+          cat version.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WatchLaterPlus-apk
+          path: WatchLaterPlus.apk
+
+      - name: Publish download link
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: WatchLater+ (latest build)
+          body: "Download WatchLaterPlus.apk below on your phone and tap it to install."
+          make_latest: true
+          files: |
+            WatchLaterPlus.apk
+            version.json
+
+      # A short note on a side branch saying whether the build worked, and why not if it failed
+      - name: Report build result
+        if: always()
+        run: |
+          mkdir -p /tmp/st && cd /tmp/st && git init -q && git checkout -q -b build-status
+          {
+            echo "result=${{ job.status }} run=$GITHUB_RUN_NUMBER sha=$GITHUB_SHA"
+            grep -nE "^e: |error:|FAILED|What went wrong|Could not" -A4 "$GITHUB_WORKSPACE/build.log" | head -150
+            echo "----"
+            tail -40 "$GITHUB_WORKSPACE/build.log"
+          } > status.txt 2>/dev/null || true
+          git add status.txt
+          git -c user.name=build -c user.email=build@users.noreply.github.com commit -qm "build $GITHUB_RUN_NUMBER: ${{ job.status }}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" build-status

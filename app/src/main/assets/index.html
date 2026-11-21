@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#101014">
+<title>WatchLater+</title>
+<style>
+:root{
+  --bg:#101014; --surface:#1a1a21; --surface2:#24242d; --line:#2f2f3a;
+  --text:#f3f1ec; --muted:#9c9aa6; --accent:#ffb22e; --on-accent:#1b1404; --hot:#ff5c47;
+  --shadow:0 10px 30px rgba(0,0,0,.45);
+  --r:18px;
+}
+html[data-theme="light"]{
+  --bg:#f6f3ec; --surface:#ffffff; --surface2:#efeadf; --line:#e2dccf;
+  --text:#17161c; --muted:#6d6a75; --accent:#f5a516; --on-accent:#1b1404; --hot:#e2452f;
+  --shadow:0 10px 30px rgba(40,30,10,.16);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px;line-height:1.35;
+  overflow:hidden;overscroll-behavior:none}
+button,input{font:inherit;color:inherit}
+button{border:0;background:none;padding:0;cursor:pointer}
+svg{display:block}
+
+#app{height:100%;display:flex;flex-direction:column}
+header{padding:calc(env(safe-area-inset-top) + 14px) 18px 10px;display:flex;align-items:center;gap:12px;min-height:64px}
+.logo{font-weight:800;font-size:24px;letter-spacing:-.6px}
+.logo b{color:var(--accent)}
+.hgrow{flex:1;min-width:0}
+.htitle{font-weight:800;font-size:22px;letter-spacing:-.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.count{font-size:13px;color:var(--muted);font-weight:600;text-align:right;line-height:1.2}
+.count strong{display:block;color:var(--accent);font-size:22px;font-weight:800;letter-spacing:-.5px}
+.iconbtn{width:44px;height:44px;border-radius:14px;background:var(--surface);display:grid;place-items:center;flex:none}
+.iconbtn svg{width:22px;height:22px}
+
+main{flex:1;overflow-y:auto;padding:4px 14px 120px;-webkit-overflow-scrolling:touch}
+
+.search{display:flex;align-items:center;gap:10px;background:var(--surface);border-radius:14px;padding:0 14px;height:46px;margin:2px 0 12px}
+.search svg{width:18px;height:18px;color:var(--muted);flex:none}
+.search input{flex:1;border:0;outline:0;background:none;min-width:0}
+.search input::placeholder{color:var(--muted)}
+
+.chips{display:flex;gap:8px;margin-bottom:14px;overflow-x:auto;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{height:38px;padding:0 16px;border-radius:999px;background:var(--surface);color:var(--muted);font-weight:700;font-size:14px;white-space:nowrap;flex:none}
+.chip.on{background:var(--accent);color:var(--on-accent)}
+
+.item{display:grid;grid-template-columns:108px 1fr 44px;gap:12px;align-items:center;background:var(--surface);border-radius:var(--r);padding:8px;margin-bottom:10px}
+.thumb{position:relative;width:108px;height:72px;border-radius:12px;overflow:hidden;background:var(--surface2);display:block}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.tile{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-weight:800;font-size:13px;letter-spacing:.3px}
+.tile.yt{background:linear-gradient(135deg,#ff3b30,#b3150c)}
+.tile.fb{background:linear-gradient(135deg,#2f7bff,#1746b8)}
+.tile.tt{background:linear-gradient(135deg,#25f4ee,#111 45%,#fe2c55)}
+.tile.ig{background:linear-gradient(135deg,#feda75,#d62976 55%,#4f5bd5)}
+.tile.x{background:linear-gradient(135deg,#3a3a44,#0c0c10)}
+.tile.web{background:linear-gradient(135deg,#6b6f80,#3b3e4b)}
+.play{position:absolute;left:50%;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:50%;background:rgba(0,0,0,.55);display:grid;place-items:center}
+.play svg{width:14px;height:14px;color:#fff;margin-left:2px}
+.tile .tname{position:absolute;left:8px;bottom:6px;font-size:11px;opacity:.95}
+.body{min-width:0;align-self:stretch;display:flex;flex-direction:column;justify-content:center;gap:5px;text-align:left}
+.body h3{margin:0;font-size:15px;font-weight:700;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.meta{margin:0;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta .fold{color:var(--text);font-weight:600}
+.acts{display:flex;flex-direction:column;gap:4px;align-items:center}
+.tick{width:40px;height:40px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;color:transparent}
+.tick svg{width:18px;height:18px}
+.more{width:40px;height:30px;display:grid;place-items:center;color:var(--muted)}
+.more svg{width:20px;height:20px}
+.item.done .tick{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.item.done .thumb,.item.done .body{opacity:.5}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fcard{background:var(--surface);border-radius:var(--r);padding:14px;text-align:left;min-height:124px;display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden}
+.fcard .em{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:24px;background:var(--tint,var(--surface2))}
+.fcard .nm{font-weight:800;font-size:16px;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fcard .ct{font-size:12.5px;color:var(--muted);margin-top:-4px}
+.badge{position:absolute;top:12px;right:12px;min-width:26px;height:26px;padding:0 8px;border-radius:999px;background:var(--accent);color:var(--on-accent);font-weight:800;font-size:13px;display:grid;place-items:center}
+.fcard.new{border:2px dashed var(--line);background:none;align-items:center;justify-content:center;color:var(--muted);font-weight:700}
+.fcard.new svg{width:26px;height:26px}
+
+.empty{text-align:center;padding:34px 18px 10px;color:var(--muted)}
+.empty .big{font-size:44px;margin-bottom:8px}
+.empty h2{color:var(--text);margin:0 0 6px;font-size:19px;letter-spacing:-.3px}
+.steps{text-align:left;background:var(--surface);border-radius:var(--r);padding:6px 16px;margin:18px 0 0}
+.steps div{display:flex;gap:12px;align-items:center;padding:11px 0;color:var(--text);font-size:14.5px}
+.steps div+div{border-top:1px solid var(--line)}
+.steps i{font-style:normal;width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-weight:800;display:grid;place-items:center;flex:none;font-size:14px}
+
+.btn{height:50px;border-radius:14px;background:var(--accent);color:var(--on-accent);font-weight:800;padding:0 18px;width:100%;display:flex;align-items:center;justify-content:center;gap:8px}
+.btn.ghost{background:var(--surface2);color:var(--text)}
+.btn.danger{background:none;color:var(--hot);border:2px solid var(--line)}
+.btn+.btn{margin-top:10px}
+
+.card{background:var(--surface);border-radius:var(--r);padding:16px;margin-bottom:12px}
+.card h4{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
+.seg{display:flex;background:var(--surface2);border-radius:12px;padding:4px;gap:4px}
+.seg button{flex:1;height:40px;border-radius:9px;font-weight:700;font-size:14px;color:var(--muted)}
+.seg button.on{background:var(--accent);color:var(--on-accent)}
+.small{font-size:13px;color:var(--muted)}
+
+footer{text-align:center;font-size:11px;color:var(--muted);padding:22px 10px 6px;line-height:1.5}
+
+nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--bg);border-top:1px solid var(--line);padding:6px 10px calc(env(safe-area-inset-bottom) + 6px)}
+nav button{flex:1;height:52px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--muted);font-size:11.5px;font-weight:700}
+nav button svg{width:22px;height:22px}
+nav button.on{color:var(--accent)}
+#fab{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom) + 78px);width:58px;height:58px;border-radius:20px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;box-shadow:var(--shadow)}
+#fab svg{width:26px;height:26px}
+
+#sheetwrap{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-end}
+#sheetwrap[hidden]{display:none}
+.backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6)}
+#sheet{position:relative;width:100%;max-height:88%;overflow-y:auto;background:var(--surface);border-radius:24px 24px 0 0;padding:10px 18px calc(env(safe-area-inset-bottom) + 18px);animation:up .18s ease-out}
+@keyframes up{from{transform:translateY(40px)}to{transform:none}}
+.grab{width:40px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 14px}
+#sheet h2{margin:0 0 4px;font-size:20px;letter-spacing:-.3px}
+#sheet .sub{margin:0 0 14px;color:var(--muted);font-size:13.5px;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;width:100%;min-height:52px;text-align:left;font-weight:600;font-size:16px;border-radius:12px;padding:0 6px}
+.row svg{width:22px;height:22px;color:var(--muted);flex:none}
+.row.hot,.row.hot svg{color:var(--hot)}
+.field{width:100%;height:50px;border-radius:14px;border:2px solid var(--line);background:var(--bg);padding:0 14px;outline:0;margin-bottom:12px}
+.field:focus{border-color:var(--accent)}
+.lbl{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin:0 0 6px 2px;text-transform:uppercase;letter-spacing:.6px}
+.pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.pick button{min-height:52px;border-radius:14px;background:var(--surface2);padding:0 12px;text-align:left;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:2px solid transparent}
+.pick button.on{border-color:var(--accent)}
+.emo{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:14px}
+.emo button{aspect-ratio:1;border-radius:10px;background:var(--surface2);font-size:20px;border:2px solid transparent}
+.emo button.on{border-color:var(--accent)}
+
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 150px);transform:translateX(-50%) translateY(12px);background:var(--text);color:var(--bg);padding:11px 18px;border-radius:999px;font-weight:700;font-size:14px;opacity:0;pointer-events:none;transition:.2s;z-index:30;max-width:86%;text-align:center}
+#toast.show{opacity:1;transform:translateX(-50%)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="top"></header>
+  <main id="main"></main>
+</div>
+<nav id="nav"></nav>
+<button id="fab" data-act="add" aria-label="Add a link"></button>
+<div id="sheetwrap" hidden><div class="backdrop" data-act="close"></div><section id="sheet" role="dialog" aria-modal="true"></section></div>
+<div id="toast" role="status"></div>
+
+<script>
+'use strict';
+/* WatchLater+ : Part 1. Home list, folders, add / move / rename / delete, watched ticks.
+   On the phone, data lives in the app (shared with the Share popup) through WLNative.
+   In a normal browser it falls back to localStorage so the page can be previewed. */
+const N = window.WLNative || null;
+const LS_KEY = 'watchlater_plus_v1';
+const VERSION = 'Part 1';
+const EMOJI = ['🍔','🎤','🏀','😂','📁','🎬','🎵','⚽','🏋️','✈️','🐶','🎮','💡','🛠️','📚','💄','🚗','🧒','💰','🙏','🩺','💃','🎣','⭐'];
+const TINTS = ['#ffb22e33','#ff5c4733','#4f8cff33','#3ecf8e33','#b98bff33','#ff8ad133','#35c9d633','#c9c13a33'];
+
+const IC = {
+  home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9.5h13V10"/></svg>',
+  folder:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.5h8.5A1.5 1.5 0 0 1 21 10v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/></svg>',
+  gear:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  search:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  dots:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>',
+  back:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+  play:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l12-7.5z"/></svg>',
+  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5-10.5-4-4L4 16z"/><path d="m13 7 4 4"/></svg>',
+  move:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.5h8.5A1.5 1.5 0 0 1 21 10v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/><path d="M10 14h5M13 11.5l2.5 2.5-2.5 2.5"/></svg>',
+  share:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2.5"/><circle cx="17.5" cy="6" r="2.5"/><circle cx="17.5" cy="18" r="2.5"/><path d="m8.2 10.8 7-3.6M8.2 13.2l7 3.6"/></svg>',
+  trash:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5"/></svg>'
+};
+
+/* ---------- data ---------- */
+function defaults(){
+  return {v:1, folders:[
+    {id:'food',name:'Food',emoji:'🍔'},
+    {id:'singing',name:'Singing',emoji:'🎤'},
+    {id:'basketball',name:'Basketball',emoji:'🏀'},
+    {id:'funny',name:'Funny',emoji:'😂'},
+    {id:'other',name:'Other',emoji:'📁'}
+  ], items:[], settings:{theme:'auto'}};
+}
+function normalize(d){
+  if(!d || typeof d!=='object' || Array.isArray(d)) d = defaults();
+  if(!Array.isArray(d.folders) || !d.folders.length) d.folders = defaults().folders;
+  d.folders = d.folders.filter(f => f && typeof f.id==='string');
+  if(!d.folders.some(f => f.id==='other')) d.folders.push({id:'other',name:'Other',emoji:'📁'});
+  if(!Array.isArray(d.items)) d.items = [];
+  d.items = d.items.filter(it => it && typeof it.id==='string' && typeof it.url==='string');
+  if(!d.settings || typeof d.settings!=='object') d.settings = {theme:'auto'};
+  const ids = new Set(d.folders.map(f => f.id));
+  d.items.forEach(it => { if(!ids.has(it.folderId)) it.folderId = 'other'; });
+  return d;
+}
+function loadData(){
+  let raw = null, d = null;
+  try{ raw = N ? N.getData() : localStorage.getItem(LS_KEY); }catch(e){}
+  try{ d = raw ? JSON.parse(raw) : null; }catch(e){}
+  return normalize(d);
+}
+function saveData(d){
+  const s = JSON.stringify(d);
+  try{ if(N) N.saveData(s); else localStorage.setItem(LS_KEY, s); }
+  catch(e){ toast('Could not save'); }
+}
+let data = loadData();
+/* Always re-read before a change, so a video saved from the Share popup is never overwritten. */
+function mutate(fn){ const d = loadData(); fn(d); saveData(d); data = d; render(); }
+
+/* ---------- helpers ---------- */
+const $ = s => document.querySelector(s);
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function uid(p){ return p + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+function host(url){ try{ return new URL(url).hostname.toLowerCase().replace(/^(www|m|web|mobile|vm|vt)\./,''); }catch(e){ return ''; } }
+function srcOf(url){
+  const h = host(url), is = d => h===d || h.endsWith('.'+d);
+  if(is('youtube.com') || is('youtu.be')) return {k:'yt',name:'YouTube'};
+  if(is('facebook.com') || is('fb.watch') || is('fb.com') || is('fb.gg')) return {k:'fb',name:'Facebook'};
+  if(is('tiktok.com')) return {k:'tt',name:'TikTok'};
+  if(is('instagram.com')) return {k:'ig',name:'Instagram'};
+  if(is('x.com') || is('twitter.com')) return {k:'x',name:'X'};
+  return {k:'web',name:h || 'Link'};
+}
+function ytId(url){
+  try{
+    const u = new URL(url), h = host(url); let id = '';
+    if(h==='youtu.be') id = u.pathname.split('/')[1] || '';
+    else if(h==='youtube.com' || h.endsWith('.youtube.com')){
+      id = u.searchParams.get('v') || '';
+      if(!id){ const m = u.pathname.match(/^\/(shorts|live|embed)\/([\w-]+)/); if(m) id = m[2]; }
+    }
+    return /^[\w-]{6,20}$/.test(id) ? id : '';
+  }catch(e){ return ''; }
+}
+function titleOf(it){
+  let t = String(it.title || '').trim();
+  const m = t.match(/^Watch\s+["“](.+)["”]\s+on YouTube$/i); if(m) t = m[1];
+  t = t.replace(/\s+-\s+YouTube$/i,'').trim();
+  if(t) return t;
+  const s = srcOf(it.url), u = it.url.toLowerCase();
+  if(s.k==='fb') return /\/reel\/|\/share\/r\//.test(u) ? 'Facebook reel' : 'Facebook video';
+  if(s.k==='yt') return u.includes('/shorts/') ? 'YouTube Short' : 'YouTube video';
+  if(s.k==='ig') return u.includes('/reel') ? 'Instagram reel' : 'Instagram post';
+  if(s.k==='tt') return 'TikTok video';
+  if(s.k==='x') return 'Post on X';
+  return s.name;
+}
+function ago(ts){
+  const s = Math.max(0, (Date.now() - (ts||0)) / 1000);
+  if(s < 60) return 'just now';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  if(s < 7*86400) return Math.floor(s/86400) + 'd ago';
+  return new Date(ts).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+}
+function folder(id){ return data.folders.find(f => f.id===id) || data.folders.find(f => f.id==='other'); }
+function fixUrl(v){
+  v = String(v||'').trim();
+  const m = v.match(/https?:\/\/\S+/i); if(m) return m[0];
+  if(/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v)) return 'https://' + v;
+  return '';
+}
+let toastT = 0;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2200); }
+
+/* ---------- theme ---------- */
+const mq = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(){
+  const pref = data.settings.theme || 'auto';
+  const dark = pref==='dark' || (pref==='auto' && mq.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  try{ if(N) N.setTheme(dark); }catch(e){}
+}
+if(mq.addEventListener) mq.addEventListener('change', applyTheme);
+
+/* ---------- state ---------- */
+const st = {view:'home', folderId:'', filter:'all', q:''};
+
+function itemHtml(it){
+  const s = srcOf(it.url), f = folder(it.folderId), y = s.k==='yt' ? ytId(it.url) : '';
+  const tile = '<span class="tile '+s.k+'"><span class="tname">'+esc(s.name)+'</span></span>';
+  const img = y ? '<img src="https://i.ytimg.com/vi/'+y+'/mqdefault.jpg" alt="" loading="lazy" onerror="this.remove()">' : '';
+  return '<article class="item'+(it.watched?' done':'')+'" data-id="'+esc(it.id)+'">'
+    + '<button class="thumb" data-act="open" aria-label="Play">'+tile+img+'<span class="play">'+IC.play+'</span></button>'
+    + '<button class="body" data-act="open"><h3>'+esc(titleOf(it))+'</h3>'
+    + '<p class="meta">'+esc(s.name)+' · <span class="fold">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</span> · '+esc(ago(it.addedAt))+'</p></button>'
+    + '<div class="acts"><button class="tick" data-act="toggle" aria-label="'+(it.watched?'Mark as not watched':'Mark as watched')+'">'+IC.check+'</button>'
+    + '<button class="more" data-act="menu" aria-label="More">'+IC.dots+'</button></div></article>';
+}
+function listHtml(items){
+  const q = st.q.trim().toLowerCase();
+  let rows = items.slice().sort((a,b) => (b.addedAt||0) - (a.addedAt||0));
+  if(st.filter==='towatch') rows = rows.filter(i => !i.watched);
+  if(st.filter==='watched') rows = rows.filter(i => i.watched);
+  if(q) rows = rows.filter(i => (titleOf(i)+' '+i.url+' '+folder(i.folderId).name).toLowerCase().includes(q));
+  return rows.map(itemHtml).join('');
+}
+function chipsHtml(items){
+  const n = items.length, w = items.filter(i => !i.watched).length;
+  const c = (k,l) => '<button class="chip'+(st.filter===k?' on':'')+'" data-act="filter" data-k="'+k+'">'+l+'</button>';
+  return '<div class="chips">'+c('all','All '+n)+c('towatch','To watch '+w)+c('watched','Watched '+(n-w))+'</div>';
+}
+const FOOT = '<footer>Copyright © 2026 Zenix_dev@company. All rights reserved. Developed by JPSums</footer>';
+const STEPS = '<div class="steps"><div><i>1</i>Open a video in Facebook, YouTube, TikTok or any app</div><div><i>2</i>Tap <b>&nbsp;Share&nbsp;</b> and choose <b>&nbsp;WatchLater+</b></div><div><i>3</i>Pick a folder. Done, it is saved here.</div></div>';
+
+function renderList(){ /* only the rows, so typing in search keeps the keyboard open */
+  const box = $('#list'); if(!box) return;
+  const items = st.view==='folder' ? data.items.filter(i => i.folderId===st.folderId) : data.items;
+  const html = listHtml(items);
+  box.innerHTML = html || '<div class="empty"><div class="big">🔎</div><h2>Nothing here</h2>'+(st.q?'No video matches your search.':'No videos in this list yet.')+'</div>';
+}
+
+function render(){
+  applyTheme();
+  const top = $('#top'), main = $('#main');
+  const toWatch = data.items.filter(i => !i.watched).length;
+  $('#nav').innerHTML = [['home','Home',IC.home],['folders','Folders',IC.folder],['settings','Settings',IC.gear]]
+    .map(n => '<button data-act="nav" data-v="'+n[0]+'" class="'+((st.view===n[0] || (n[0]==='folders' && st.view==='folder'))?'on':'')+'">'+n[2]+n[1]+'</button>').join('');
+  $('#fab').innerHTML = IC.plus;
+  $('#fab').hidden = st.view==='settings';
+  const searchBox = '<label class="search">'+IC.search+'<input id="q" type="search" placeholder="Search your videos" value="'+esc(st.q)+'" autocomplete="off"></label>';
+
+  if(st.view==='home'){
+    top.innerHTML = '<div class="hgrow"><div class="logo">WatchLater<b>+</b></div></div><div class="count"><strong>'+toWatch+'</strong>to watch</div>';
+    if(!data.items.length){
+      main.innerHTML = '<div class="empty"><div class="big">🍿</div><h2>Nothing saved yet</h2>Save a video from any app and it lands here.'+STEPS
+        + (N ? '' : '<button class="btn ghost" data-act="demo" style="margin-top:16px">See it with sample videos</button>') + '</div>' + FOOT;
+    } else {
+      main.innerHTML = searchBox + chipsHtml(data.items) + '<div id="list"></div>' + FOOT;
+      renderList();
+    }
+  }
+  else if(st.view==='folders'){
+    top.innerHTML = '<div class="hgrow"><div class="htitle">Folders</div></div><div class="count"><strong>'+data.folders.length+'</strong>folders</div>';
+    main.innerHTML = '<div class="grid">' + data.folders.map((f,i) => {
+      const its = data.items.filter(x => x.folderId===f.id), w = its.filter(x => !x.watched).length;
+      return '<button class="fcard" data-act="folder" data-id="'+esc(f.id)+'" style="--tint:'+TINTS[i % TINTS.length]+'">'
+        + (w ? '<span class="badge">'+w+'</span>' : '')
+        + '<span class="em">'+esc(f.emoji||'📁')+'</span><span class="nm">'+esc(f.name)+'</span>'
+        + '<span class="ct">'+its.length+(its.length===1?' video':' videos')+'</span></button>';
+    }).join('') + '<button class="fcard new" data-act="folder-new">'+IC.plus+'New folder</button></div>' + FOOT;
+  }
+  else if(st.view==='folder'){
+    const f = folder(st.folderId), its = data.items.filter(i => i.folderId===f.id);
+    top.innerHTML = '<button class="iconbtn" data-act="back" aria-label="Back">'+IC.back+'</button>'
+      + '<div class="hgrow"><div class="htitle">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</div></div>'
+      + '<button class="iconbtn" data-act="folder-edit" data-id="'+esc(f.id)+'" aria-label="Edit folder">'+IC.edit+'</button>';
+    main.innerHTML = its.length
+      ? searchBox + chipsHtml(its) + '<div id="list"></div>' + FOOT
+      : '<div class="empty"><div class="big">'+esc(f.emoji||'📁')+'</div><h2>No videos in '+esc(f.name)+' yet</h2>Share a video to WatchLater+ and pick this folder.</div>' + FOOT;
+    renderList();
+  }
+  else {
+    const th = data.settings.theme || 'auto';
+    const seg = (k,l) => '<button data-act="theme" data-k="'+k+'" class="'+(th===k?'on':'')+'">'+l+'</button>';
+    top.innerHTML = '<div class="hgrow"><div class="htitle">Settings</div></div>';
+    main.innerHTML = '<div class="card"><h4>Look</h4><div class="seg">'+seg('auto','Auto')+seg('light','Light')+seg('dark','Dark')+'</div></div>'
+      + '<div class="card"><h4>How to save a video</h4>'+STEPS.replace('class="steps"','class="steps" style="margin:0;padding:0;background:none"')+'</div>'
+      + '<div class="card"><h4>About</h4><div><b>WatchLater+</b> · '+esc(VERSION)+'</div><p class="small" style="margin:6px 0 0">'
+      + data.items.length+' videos in '+data.folders.length+' folders. Everything is kept on this phone and works offline.</p></div>' + FOOT;
+  }
+}
+
+/* ---------- sheets ---------- */
+let sheetOpen = false;
+function sheet(html){ $('#sheet').innerHTML = '<div class="grab"></div>' + html; $('#sheetwrap').hidden = false; $('#sheet').scrollTop = 0; sheetOpen = true; }
+function closeSheet(){ $('#sheetwrap').hidden = true; $('#sheet').innerHTML = ''; sheetOpen = false; if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); }
+function pickHtml(sel){
+  return '<div class="pick">' + data.folders.map(f => '<button data-act="pick" data-id="'+esc(f.id)+'" class="'+(f.id===sel?'on':'')+'">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</button>').join('') + '</div>';
+}
+function item(id){ return data.items.find(i => i.id===id); }
+
+function menuSheet(id){
+  const it = item(id); if(!it) return;
+  const r = (act,ic,l,cls) => '<button class="row '+(cls||'')+'" data-act="'+act+'" data-id="'+esc(id)+'">'+ic+l+'</button>';
+  sheet('<h2>'+esc(titleOf(it))+'</h2><p class="sub">'+esc(it.url)+'</p>'
+    + r('open',IC.play,'Watch now')
+    + r('toggle',IC.check, it.watched ? 'Mark as not watched' : 'Mark as watched')
+    + r('m-move',IC.move,'Move to another folder')
+    + r('m-rename',IC.edit,'Rename')
+    + r('m-share',IC.share,'Send to someone')
+    + r('m-delete',IC.trash,'Delete','hot'));
+}
+function moveSheet(id){
+  const it = item(id); if(!it) return;
+  sheet('<h2>Move to which folder?</h2><p class="sub">'+esc(titleOf(it))+'</p><div data-move="'+esc(id)+'">'+pickHtml(it.folderId)+'</div>');
+}
+function renameSheet(id){
+  const it = item(id); if(!it) return;
+  sheet('<h2>Rename</h2><p class="sub">Give it a name you will recognise.</p><input class="field" id="f-title" maxlength="200" value="'+esc(titleOf(it))+'">'
+    + '<button class="btn" data-act="save-rename" data-id="'+esc(id)+'">Save</button>');
+  $('#f-title').focus();
+}
+function deleteSheet(id){
+  const it = item(id); if(!it) return;
+  sheet('<h2>Delete this video?</h2><p class="sub">'+esc(titleOf(it))+'</p>'
+    + '<button class="btn danger" data-act="do-delete" data-id="'+esc(id)+'">Yes, delete</button><button class="btn ghost" data-act="close">Keep it</button>');
+}
+let addFolder = 'other';
+function addSheet(){
+  addFolder = st.view==='folder' ? st.folderId : 'other';
+  sheet('<h2>Add a video link</h2><p class="sub">Paste a link here, or use Share in any app.</p>'
+    + '<label class="lbl" for="f-url">Link</label><input class="field" id="f-url" type="url" inputmode="url" placeholder="https://..." autocomplete="off">'
+    + '<label class="lbl" for="f-name">Name (optional)</label><input class="field" id="f-name" maxlength="200" placeholder="e.g. Crispy pork belly recipe" autocomplete="off">'
+    + '<span class="lbl">Folder</span><div data-add="1">'+pickHtml(addFolder)+'</div>'
+    + '<button class="btn" data-act="save-add">Save</button>');
+}
+let editEmoji = '📁';
+function folderSheet(id){
+  const f = id ? data.folders.find(x => x.id===id) : null;
+  editEmoji = f ? (f.emoji || '📁') : '📁';
+  const list = EMOJI.includes(editEmoji) ? EMOJI : [editEmoji].concat(EMOJI.slice(0, EMOJI.length-1));
+  sheet('<h2>'+(f ? 'Edit folder' : 'New folder')+'</h2><p class="sub">'+(f ? 'Change the name or icon.' : 'Name it and pick an icon.')+'</p>'
+    + '<label class="lbl" for="f-fname">Name</label><input class="field" id="f-fname" maxlength="30" placeholder="e.g. Travel" value="'+esc(f ? f.name : '')+'" autocomplete="off">'
+    + '<span class="lbl">Icon</span><div class="emo">'+list.map(e => '<button data-act="emoji" data-e="'+esc(e)+'" class="'+(e===editEmoji?'on':'')+'">'+e+'</button>').join('')+'</div>'
+    + '<button class="btn" data-act="save-folder" data-id="'+esc(id||'')+'">Save</button>'
+    + (f && f.id!=='other' ? '<button class="btn danger" data-act="del-folder" data-id="'+esc(f.id)+'">Delete folder</button>' : ''));
+  if(!f) $('#f-fname').focus();
+}
+function delFolderSheet(id){
+  const f = data.folders.find(x => x.id===id); if(!f) return;
+  const n = data.items.filter(i => i.folderId===id).length;
+  sheet('<h2>Delete "'+esc(f.name)+'"?</h2><p class="sub">'+(n ? 'Its '+n+(n===1?' video moves':' videos move')+' to Other. Nothing is lost.' : 'The folder is empty.')+'</p>'
+    + '<button class="btn danger" data-act="do-del-folder" data-id="'+esc(id)+'">Yes, delete folder</button><button class="btn ghost" data-act="close">Keep it</button>');
+}
+
+/* ---------- actions ---------- */
+function openItem(id){
+  const it = item(id); if(!it) return;
+  if(!/^https?:\/\//i.test(it.url)){ toast('This one has no link'); return; }
+  if(N){ try{ N.openUrl(it.url); }catch(e){ toast('Could not open'); } }
+  else window.open(it.url, '_blank', 'noopener');
+}
+function demo(){
+  const now = Date.now(), H = 3600000;
+  const rows = [
+    ['https://www.facebook.com/reel/1203948571','Crispy pork belly, 3 ingredients','food',0.3,false],
+    ['https://youtu.be/wl-demo-0001','Jokic 40-point triple double vs Lakers | Full highlights','basketball',2,false],
+    ['https://www.tiktok.com/@cover.sessions/video/7301','She sang "Bakit Pa" and the whole mall stopped','singing',5,false],
+    ['https://www.facebook.com/share/r/1AbCdEfGh/','','other',9,false],
+    ['https://www.instagram.com/reel/C9xYz12/','Dad jokes that actually landed','funny',26,true],
+    ['https://youtu.be/wl-demo-0002','How to make chicken inasal at home','food',50,false],
+    ['https://www.youtube.com/shorts/wl-demo-03','Curry from the logo, again','basketball',75,true]
+  ];
+  mutate(d => { rows.forEach((r,i) => d.items.push({id:uid('v')+i, url:r[0], title:r[1], folderId:r[2], addedAt:now - r[3]*H, watched:r[4]})); });
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]'); if(!el) return;
+  const act = el.dataset.act;
+  const holder = el.dataset.id !== undefined ? el : el.closest('[data-id]');
+  const id = holder ? holder.dataset.id : '';
+  switch(act){
+    case 'nav': st.view = el.dataset.v; st.q = ''; st.filter = 'all'; render(); $('#main').scrollTop = 0; break;
+    case 'back': st.view = 'folders'; st.q = ''; st.filter = 'all'; render(); break;
+    case 'filter': st.filter = el.dataset.k; render(); break;
+    case 'folder': st.view = 'folder'; st.folderId = id; st.q = ''; st.filter = 'all'; render(); $('#main').scrollTop = 0; break;
+    case 'open': closeSheet(); openItem(id); break;
+    case 'toggle': closeSheet(); mutate(d => { const it = d.items.find(i => i.id===id); if(it) it.watched = !it.watched; }); break;
+    case 'menu': menuSheet(id); break;
+    case 'close': closeSheet(); break;
+    case 'add': addSheet(); break;
+    case 'demo': demo(); break;
+    case 'theme': mutate(d => { d.settings.theme = el.dataset.k; }); break;
+    case 'm-move': moveSheet(id); break;
+    case 'm-rename': renameSheet(id); break;
+    case 'm-delete': deleteSheet(id); break;
+    case 'm-share': {
+      const it = item(id); closeSheet(); if(!it) break;
+      const text = (it.title ? titleOf(it) + '\n' : '') + it.url;
+      if(N){ try{ N.shareText(text); }catch(err){ toast('Could not share'); } }
+      else if(navigator.share) navigator.share({text}).catch(() => {});
+      else toast('Sharing works in the phone app');
+      break;
+    }
+    case 'pick': {
+      const mv = el.closest('[data-move]');
+      if(mv){
+        const vid = mv.dataset.move, f = folder(id); closeSheet();
+        mutate(d => { const it = d.items.find(i => i.id===vid); if(it) it.folderId = id; });
+        toast('Moved to ' + f.name);
+      } else {
+        addFolder = id;
+        el.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b===el));
+      }
+      break;
+    }
+    case 'save-rename': {
+      const v = $('#f-title').value.trim(); closeSheet();
+      mutate(d => { const it = d.items.find(i => i.id===id); if(it) it.title = v; });
+      break;
+    }
+    case 'do-delete': closeSheet(); mutate(d => { d.items = d.items.filter(i => i.id!==id); }); toast('Deleted'); break;
+    case 'save-add': {
+      const url = fixUrl($('#f-url').value), name = $('#f-name').value.trim();
+      if(!url){ toast('Paste a link first'); $('#f-url').focus(); break; }
+      const f = folder(addFolder); closeSheet();
+      mutate(d => {
+        const old = d.items.find(i => i.url===url);
+        if(old){ old.folderId = f.id; old.addedAt = Date.now(); old.watched = false; if(name) old.title = name; }
+        else d.items.push({id:uid('v'), url, title:name, folderId:f.id, addedAt:Date.now(), watched:false});
+      });
+      toast('Saved to ' + f.name);
+      break;
+    }
+    case 'folder-new': folderSheet(''); break;
+    case 'folder-edit': folderSheet(id); break;
+    case 'emoji': editEmoji = el.dataset.e; el.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b===el)); break;
+    case 'save-folder': {
+      const name = $('#f-fname').value.trim();
+      if(!name){ toast('Give the folder a name'); $('#f-fname').focus(); break; }
+      const clash = data.folders.find(f => f.name.toLowerCase()===name.toLowerCase() && f.id!==id);
+      if(clash){ toast('You already have a folder called ' + clash.name); break; }
+      closeSheet();
+      mutate(d => {
+        const f = id ? d.folders.find(x => x.id===id) : null;
+        if(f){ f.name = name; f.emoji = editEmoji; }
+        else { const at = d.folders.findIndex(x => x.id==='other'); d.folders.splice(at < 0 ? d.folders.length : at, 0, {id:uid('f'), name, emoji:editEmoji}); }
+      });
+      toast(id ? 'Folder updated' : 'Folder added');
+      break;
+    }
+    case 'del-folder': delFolderSheet(id); break;
+    case 'do-del-folder':
+      closeSheet(); st.view = 'folders';
+      mutate(d => { d.items.forEach(i => { if(i.folderId===id) i.folderId = 'other'; }); d.folders = d.folders.filter(f => f.id!==id); });
+      toast('Folder deleted');
+      break;
+  }
+});
+document.addEventListener('input', e => { if(e.target.id==='q'){ st.q = e.target.value; renderList(); } });
+document.addEventListener('keydown', e => {
+  if(e.key!=='Enter') return;
+  const map = {'f-title':'save-rename','f-url':'save-add','f-name':'save-add','f-fname':'save-folder'};
+  const act = map[e.target.id]; if(!act) return;
+  const b = document.querySelector('#sheet [data-act="'+act+'"]'); if(b) b.click();
+});
+
+/* ---------- phone hooks ---------- */
+/* Back button: close a sheet, leave a folder, or go Home. Returns false when the app should close. */
+window.WLBack = function(){
+  if(sheetOpen){ closeSheet(); return true; }
+  if(st.view==='folder'){ st.view = 'folders'; render(); return true; }
+  if(st.view!=='home'){ st.view = 'home'; render(); return true; }
+  return false;
+};
+/* Coming back to the app: pick up anything saved from the Share popup meanwhile. */
+window.WLResume = function(){
+  if(sheetOpen) return;
+  const a = document.activeElement; if(a && a.id==='q') return;
+  data = loadData(); render();
+};
+
+render();
+</script>
+</body>
+</html>
