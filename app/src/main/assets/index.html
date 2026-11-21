@@ -67,6 +67,8 @@ main{flex:1;overflow-y:auto;padding:4px 14px 120px;-webkit-overflow-scrolling:to
 .srcb b{font:800 12px/1 system-ui,sans-serif}
 .thumb .srcb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1}
 .srcb.has{background:none;border:0;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+.srcb.fav{background:#fff}
+.thumb .srcb.fav img{inset:3px;width:calc(100% - 6px);height:calc(100% - 6px);object-fit:contain;border-radius:3px}
 .srcb.yt{background:#e62117}.srcb.fb{background:#1b74e4}.srcb.tt{background:#111}
 .srcb.ig{background:linear-gradient(135deg,#f9b23c,#e1306c 55%,#6a4ad6)}.srcb.x{background:#111}
 .lay-grid .srcb,.lay-big .srcb{width:28px;height:28px;left:8px;top:8px}
@@ -508,8 +510,26 @@ function srcOf(url){
   if(is('tiktok.com')) return {k:'tt',name:'TikTok'};
   if(is('instagram.com')) return {k:'ig',name:'Instagram'};
   if(is('x.com') || is('twitter.com')) return {k:'x',name:'X'};
-  return {k:'web',name:h || 'Link'};
+  for(const a of MORE_APPS) if(a.d.some(is)) return {k:a.k, name:a.name, icon:a.d[0]};
+  return {k:'web', name:h || 'Link', icon:h};
 }
+/* Other apps people share from: recognised by name, shown with their own icon. */
+const MORE_APPS = [
+  {k:'th', name:'Threads', d:['threads.net','threads.com']},
+  {k:'sc', name:'Snapchat', d:['snapchat.com']},
+  {k:'pin', name:'Pinterest', d:['pinterest.com','pin.it']},
+  {k:'rd', name:'Reddit', d:['reddit.com','redd.it']},
+  {k:'li', name:'LinkedIn', d:['linkedin.com','lnkd.in']},
+  {k:'tw', name:'Twitch', d:['twitch.tv']},
+  {k:'vm', name:'Vimeo', d:['vimeo.com']},
+  {k:'dm', name:'Dailymotion', d:['dailymotion.com','dai.ly']},
+  {k:'kk', name:'Kick', d:['kick.com']},
+  {k:'tg', name:'Telegram', d:['t.me','telegram.org']},
+  {k:'lk', name:'Likee', d:['likee.video','like.video']},
+  {k:'bl', name:'Bilibili', d:['bilibili.com','bilibili.tv','b23.tv']},
+  {k:'sp', name:'Spotify', d:['spotify.com','spotify.link']}
+];
+const ICON_HOME = {yt:'youtube.com', fb:'facebook.com', tt:'tiktok.com', ig:'instagram.com', x:'x.com'};
 function ytId(url){
   try{
     const u = new URL(url), h = host(url); let id = '';
@@ -590,10 +610,18 @@ const BADGE = {
   x:'<b>X</b>',
   web:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.6 2.6 14.4 0 17M12 3.5c-2.6 2.6-2.6 14.4 0 17"/></svg>'
 };
-function badge(k){
-  const v = appIc[k];
-  const img = v ? '<img src="https://appassets.androidplatform.net/icons/'+k+'.png?'+(Number(v)||0)+'" alt="" onerror="this.parentNode.classList.remove(\'has\');this.remove()">' : '';
-  return '<span class="srcb '+k+(v?' has':'')+'" aria-hidden="true">'+(BADGE[k]||BADGE.web)+img+'</span>';
+/* The site's own icon, fetched once by the site's helper and then kept on the phone. */
+const ICON_URL = (WEB ? '' : 'https://watchlaterplus.netlify.app') + '/.netlify/functions/icon?h=';
+function badge(s){
+  if(typeof s==='string') s = {k:s};
+  const k = s.k, v = appIc[k];
+  const dom = ICON_HOME[k] || s.icon || '';
+  let src = '', fav = false;
+  if(v) src = 'https://appassets.androidplatform.net/icons/'+k+'.png?'+(Number(v)||0);       /* the real app on this phone */
+  else if(dom && (WEB || N) && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(dom)){ src = ICON_URL + encodeURIComponent(dom); fav = true; }
+  const img = src ? '<img src="'+esc(src)+'" alt="" loading="lazy" onerror="this.parentNode.classList.remove(\'has\',\'fav\');this.remove()">' : '';
+  const stand = BADGE[k] || (k!=='web' && s.name ? '<b>'+esc(s.name[0])+'</b>' : BADGE.web);
+  return '<span class="srcb '+esc(k)+(src ? ' has' : '')+(fav ? ' fav' : '')+'" aria-hidden="true">'+stand+img+'</span>';
 }
 function isTall(url){
   const u = String(url||'').toLowerCase(), k = srcOf(url).k;
@@ -602,7 +630,7 @@ function isTall(url){
 function itemHtml(it, lay){
   lay = lay || 'list';
   const s = srcOf(it.url), f = folder(it.folderId), y = s.k==='yt' ? ytId(it.url) : '';
-  const tile = '<span class="tile '+s.k+'"><span class="tname">'+esc(s.name)+'</span></span>';
+  const tile = '<span class="tile '+(['yt','fb','tt','ig','x'].includes(s.k) ? s.k : 'web')+'"><span class="tname">'+esc(s.name)+'</span></span>';
   const p = pv[it.id];
   const src = y ? 'https://i.ytimg.com/vi/'+y+'/'+(lay==='list' ? 'mqdefault' : 'hqdefault')+'.jpg'
     : N ? (p && p.i ? 'https://appassets.androidplatform.net/thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '')
@@ -610,7 +638,7 @@ function itemHtml(it, lay){
   const img = src ? '<img src="'+esc(src)+'" alt="" loading="lazy" onerror="this.remove()">' : '';
   const under = underTitle(it);
   const ar = lay==='list' ? '' : ' style="--ar:'+(isTall(it.url) ? (lay==='big' ? '4/5' : '3/4') : '16/10')+'"';
-  const thumb = '<button class="thumb" data-act="open" aria-label="Play"'+ar+'>'+tile+img+badge(s.k)+'<span class="play">'+IC.play+'</span></button>';
+  const thumb = '<button class="thumb" data-act="open" aria-label="Play"'+ar+'>'+tile+img+badge(s)+'<span class="play">'+IC.play+'</span></button>';
   const title = '<h3>'+esc(titleOf(it))+'</h3>'+(under ? '<p class="note2">'+esc(under)+'</p>' : '');
   const meta = (lay==='grid' ? '' : esc(s.name)+' · ')+'<span class="fold">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</span> · '+esc(ago(it.addedAt));
   const tick = '<button class="tick" data-act="toggle" aria-label="'+(it.watched?'Mark as not watched':'Mark as watched')+'">'+IC.check+'</button>';

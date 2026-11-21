@@ -27,6 +27,19 @@ public final class AppIcons {
             {"tt", "com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go"},
             {"yt", "com.google.android.youtube"},
             {"x", "com.twitter.android"},
+            {"th", "com.instagram.barcelona"},
+            {"sc", "com.snapchat.android"},
+            {"pin", "com.pinterest"},
+            {"rd", "com.reddit.frontpage"},
+            {"li", "com.linkedin.android"},
+            {"tw", "tv.twitch.android.app"},
+            {"vm", "com.vimeo.android.videoapp"},
+            {"dm", "com.dailymotion.dailymotion"},
+            {"kk", "com.kick.mobile"},
+            {"tg", "org.telegram.messenger"},
+            {"lk", "video.like"},
+            {"bl", "com.bstar.intl", "tv.danmaku.bili"},
+            {"sp", "com.spotify.music"},
     };
 
     private AppIcons() { }
