@@ -11,5 +11,13 @@ public class ReminderReceiver extends BroadcastReceiver {
         String action = intent == null ? null : intent.getAction();
         if (Reminders.ACTION_FIRE.equals(action)) Reminders.show(context, false);
         Reminders.schedule(context);
+        if (!Reminders.ACTION_FIRE.equals(action)) {
+            // the phone restarted or the app was updated: bring the floating button back if it was on
+            try {
+                BubbleService.startIfWanted(context.getApplicationContext());
+            } catch (Exception e) {
+                // opening the app starts it again
+            }
+        }
     }
 }

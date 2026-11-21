@@ -3,6 +3,8 @@ package com.jpsums.watchlater;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
@@ -50,6 +52,8 @@ public class ShareActivity extends Activity {
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
     private static final int SCRIM = 0x99000000;
+    /** Started by the floating button: save the link that was just copied. */
+    static final String ACTION_CLIP = "com.jpsums.watchlater.FROM_CLIPBOARD";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -62,6 +66,7 @@ public class ShareActivity extends Activity {
     private boolean changing = false;     // you tapped "Change folder" after an auto-save
     private boolean askShown = false;
     private String shareNote = "";        // what the other app handed over (shown in the video's menu, for troubleshooting)
+    private boolean waitingForClipboard = false;
 
     private boolean night = true;
     private int cSheet, cText, cMuted, cTile, cAccent, cLine;
@@ -75,19 +80,61 @@ public class ShareActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        if (!readShare(getIntent())) {
+        Intent in = getIntent();
+        if (in != null && ACTION_CLIP.equals(in.getAction())) {
+            // Android only lets an app read the copied text once its window is in front:
+            // wait for that (see onWindowFocusChanged) before reading it.
+            waitingForClipboard = true;
+            setContentView(new FrameLayout(this));
+            return;
+        }
+        if (!readShare(in)) {
             Toast.makeText(this, "WatchLater+: there is no link to save here", Toast.LENGTH_LONG).show();
             finish();
             return;
         }
+        begin();
+    }
 
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus || !waitingForClipboard) return;
+        waitingForClipboard = false;
+        if (!readText(copiedText(), "", "")) {
+            // nothing copied yet: explain the two steps
+            pickColours(load());
+            getWindow().setStatusBarColor(SCRIM);
+            getWindow().setNavigationBarColor(cSheet);
+            setContentView(buildHint());
+            return;
+        }
+        shareNote = "floating button (copied link)";
+        begin();
+    }
+
+    private String copiedText() {
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm == null || !cm.hasPrimaryClip()) return "";
+            ClipData clip = cm.getPrimaryClip();
+            if (clip == null || clip.getItemCount() == 0) return "";
+            CharSequence cs = clip.getItemAt(0).coerceToText(this);
+            return cs == null ? "" : cs.toString();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** We have a link: look up the folder, start the preview, then save or ask. */
+    private void begin() {
         JSONObject data = load();
         pickColours(data);
         getWindow().setStatusBarColor(SCRIM);
         getWindow().setNavigationBarColor(cSheet);
         findExisting(data);
 
-        readShareExtras(getIntent());
+        if (shareNote.isEmpty()) readShareExtras(getIntent());
         // start getting the title and thumbnail right away, while you choose
         Previews.fetch(this, itemId, url, title, (id, t, d) -> runOnUiThread(() -> onPreview(t, d)));
 
@@ -118,10 +165,13 @@ public class ShareActivity extends Activity {
     private boolean readShare(Intent in) {
         if (in == null || !Intent.ACTION_SEND.equals(in.getAction())) return false;
         CharSequence cs = in.getCharSequenceExtra(Intent.EXTRA_TEXT);
-        String text = cs == null ? "" : cs.toString();
-        String subject = clean(in.getStringExtra(Intent.EXTRA_SUBJECT));
-        String extraTitle = clean(in.getStringExtra(Intent.EXTRA_TITLE));
+        return readText(cs == null ? "" : cs.toString(),
+                clean(in.getStringExtra(Intent.EXTRA_SUBJECT)), clean(in.getStringExtra(Intent.EXTRA_TITLE)));
+    }
 
+    /** Finds the link (and a title, if there is one) in shared or copied text. False when there is no link. */
+    private boolean readText(String text, String subject, String extraTitle) {
+        if (text == null) text = "";
         String rest = "";
         Matcher m = URL.matcher(text);
         if (m.find()) {
@@ -338,6 +388,29 @@ public class ShareActivity extends Activity {
         done.setGravity(Gravity.CENTER);
         done.setOnClickListener(v -> finish());
         row.addView(done, tileParams());
+        sheet.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP));
+        return root;
+    }
+
+    /** The floating button was tapped but no link is copied yet. */
+    private View buildHint() {
+        FrameLayout root = new FrameLayout(this);
+        LinearLayout sheet = newSheet(root);
+        sheet.addView(text("WatchLater+", 13, cAccent, true), new LinearLayout.LayoutParams(MATCH, WRAP));
+        sheet.addView(text("Copy the video's link first", 21, cText, true), new LinearLayout.LayoutParams(MATCH, WRAP));
+        TextView how = text("1. In Facebook, TikTok or YouTube tap Share.\n2. Tap Copy link.\n3. Tap this button again.",
+                15, cMuted, false);
+        how.setLineSpacing(dp(4), 1f);
+        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(MATCH, WRAP);
+        hl.topMargin = dp(8);
+        hl.bottomMargin = dp(12);
+        sheet.addView(how, hl);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        TextView ok = tile("OK", cAccent, 0xFF1B1404);
+        ok.setGravity(Gravity.CENTER);
+        ok.setOnClickListener(v -> finish());
+        row.addView(ok, tileParams());
         sheet.addView(row, new LinearLayout.LayoutParams(MATCH, WRAP));
         return root;
     }

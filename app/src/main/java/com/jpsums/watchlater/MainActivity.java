@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceRequest;
@@ -34,6 +35,7 @@ public class MainActivity extends Activity {
     private boolean pageReady = false;
     private String pendingShow = null;     // a list to open once the page is ready (from the reminder)
     private boolean testAfterAllow = false;
+    private boolean bubbleAfterAllow = false; // waiting for "Appear on top" to be switched on
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -86,6 +88,7 @@ public class MainActivity extends Activity {
         }));
         Previews.prune(getApplicationContext());
         Reminders.schedule(this);
+        BubbleService.startIfWanted(getApplicationContext());
         readIntent(getIntent());
     }
 
@@ -140,6 +143,15 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (bubbleAfterAllow) {
+            // back from the phone's "Appear on top" screen
+            bubbleAfterAllow = false;
+            if (BubbleService.allowed(this)) {
+                BubbleService.start(getApplicationContext());
+            } else if (pageReady) {
+                webView.evaluateJavascript("window.WLBubbleDenied && window.WLBubbleDenied()", null);
+            }
+        }
         // pick up videos saved from the Share popup while the app was in the background
         if (pageReady) webView.evaluateJavascript("window.WLResume && window.WLResume()", null);
     }
@@ -272,6 +284,35 @@ public class MainActivity extends Activity {
                     webView.evaluateJavascript("window.WLNotifyDenied && window.WLNotifyDenied()", null);
                 }
                 Reminders.schedule(MainActivity.this);
+            });
+        }
+
+        /** Floating button switched on or off in the page. */
+        @JavascriptInterface
+        public void setBubble(final boolean on) {
+            runOnUiThread(() -> {
+                if (!on) {
+                    BubbleService.stop(getApplicationContext());
+                    return;
+                }
+                if (BubbleService.allowed(MainActivity.this)) {
+                    BubbleService.start(getApplicationContext());
+                    return;
+                }
+                bubbleAfterAllow = true;
+                Toast.makeText(MainActivity.this, "Find WatchLater+ and switch on \"Appear on top\", then come back",
+                        Toast.LENGTH_LONG).show();
+                try {
+                    startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName())));
+                } catch (Exception e) {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION));
+                    } catch (Exception e2) {
+                        bubbleAfterAllow = false;
+                        webView.evaluateJavascript("window.WLBubbleDenied && window.WLBubbleDenied()", null);
+                    }
+                }
             });
         }
 

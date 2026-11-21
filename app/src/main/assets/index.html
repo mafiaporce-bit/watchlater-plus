@@ -171,7 +171,7 @@ textarea.field{height:auto;min-height:96px;padding:12px 14px;resize:none;line-he
    In a normal browser it falls back to localStorage so the page can be previewed. */
 const N = window.WLNative || null;
 const LS_KEY = 'watchlater_plus_v1';
-const VERSION = 'Part 2';
+const VERSION = 'Part 2 + floating button';
 const EMOJI = ['🍔','🎤','🏀','😂','📁','🎬','🎵','⚽','🏋️','✈️','🐶','🎮','💡','🛠️','📚','💄','🚗','🧒','💰','🙏','🩺','💃','🎣','⭐'];
 const TINTS = ['#ffb22e33','#ff5c4733','#4f8cff33','#3ecf8e33','#b98bff33','#ff8ad133','#35c9d633','#c9c13a33'];
 
@@ -401,13 +401,18 @@ function render(){
     renderList();
   }
   else {
-    const th = data.settings.theme || 'auto', rc = remindCfg(), as = autoSortOn();
+    const th = data.settings.theme || 'auto', rc = remindCfg(), as = autoSortOn(), bub = data.settings.bubble === true;
     const seg = (act,k,l,on) => '<button data-act="'+act+'" data-k="'+k+'" class="'+(on?'on':'')+'">'+l+'</button>';
     const two = n => String(n).padStart(2,'0');
     top.innerHTML = '<div class="hgrow"><div class="htitle">Settings</div></div>';
     main.innerHTML = '<div class="card"><h4>Auto-sort</h4><div class="line"><div class="grow"><b>Sort videos for me</b></div>'
       + '<div class="seg">'+seg('autosort','on','On',as)+seg('autosort','off','Off',!as)+'</div></div>'
       + '<p class="small">When a video\'s title matches a folder\'s words, it is saved there without asking. It also learns from the folders you pick. Edit the words from any folder\'s pencil button.</p></div>'
+      + '<div class="card"><h4>Floating button</h4><div class="line"><div class="grow"><b>Save button over other apps</b></div>'
+      + '<div class="seg">'+seg('bubble','on','On',bub)+seg('bubble','off','Off',!bub)+'</div></div>'
+      + '<p class="small">In Facebook, TikTok or YouTube tap <b>Share</b>, then <b>Copy link</b>, then tap the round WatchLater+ button. Drag it to move it. Press and hold it to turn it off.</p>'
+      + (bub ? '' : '<p class="small">The first time, your phone asks you to allow <b>Appear on top</b>. If that switch is greyed out, open the phone\'s Settings, Apps, WatchLater+, tap the three dots at the top right and choose <b>Allow restricted settings</b>, then try again.</p>')
+      + '</div>'
       + '<div class="card"><h4>Reminder</h4><div class="line"><div class="grow"><b>Remind me every day</b></div>'
       + '<div class="seg">'+seg('remind','on','On',rc.on)+seg('remind','off','Off',!rc.on)+'</div></div>'
       + (rc.on ? '<input class="field" id="f-time" type="time" value="'+two(rc.h)+':'+two(rc.m)+'" aria-label="Reminder time">'
@@ -552,6 +557,13 @@ document.addEventListener('click', e => {
     case 'demo': demo(); break;
     case 'theme': mutate(d => { d.settings.theme = el.dataset.k; }); break;
     case 'autosort': mutate(d => { d.settings.autoSort = el.dataset.k==='on'; }); break;
+    case 'bubble': {
+      const on = el.dataset.k==='on';
+      if(on && !N){ toast('The floating button works in the phone app'); break; }
+      mutate(d => { d.settings.bubble = on; });
+      try{ if(N) N.setBubble(on); }catch(err){}
+      break;
+    }
     case 'remind': {
       const on = el.dataset.k==='on';
       if(on && !N){ toast('Reminders work in the phone app'); break; }
@@ -695,6 +707,11 @@ window.WLShow = function(list){
 window.WLNotifyDenied = function(){
   mutate(d => { const r = remindCfg(); d.settings.remind = {on:false, h:r.h, m:r.m}; });
   toast('Allow notifications for WatchLater+ in your phone settings first');
+};
+/* "Appear on top" was not allowed: switch the floating button back off and say why. */
+window.WLBubbleDenied = function(){
+  mutate(d => { d.settings.bubble = false; });
+  toast('Allow "Appear on top" for WatchLater+ first');
 };
 if(!N) document.addEventListener('visibilitychange', () => { if(!document.hidden && askArmed) askWatched(); });
 try{ if(N && N.fetchPreviews) N.fetchPreviews(); }catch(e){}
