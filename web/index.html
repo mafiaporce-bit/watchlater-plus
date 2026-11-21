@@ -1300,10 +1300,9 @@ function webCards(){
   const k = inboxCode();
   return WEB_INSTALL
     + '<div class="card"><h4>Share menu on iPhone</h4>'
-    + (k ? '<p class="small" style="margin-top:0">It is on. Videos you share to WatchLater+ from other apps land here when you open the app.</p>'
+    + (k ? '<p class="small" style="margin-top:0">It is on. Videos you share to WatchLater+ from other apps land here by themselves, within a few seconds while the app is open.</p>'
           + '<button class="btn" data-act="inbox-how" style="margin-top:12px">Show the set-up steps</button>'
           + '<button class="btn ghost" data-act="inbox-copy">Copy my link</button>'
-          + '<button class="btn ghost" data-act="inbox-check">Check for new videos now</button>'
           + '<button class="btn danger" data-act="inbox-off">Turn it off</button>'
           + '<p class="small">The link is private to you. Anyone who has it can add videos to your list, so do not post it.</p>'
         : '<p class="small" style="margin-top:0">Make WatchLater+ show up when you tap <b>Share</b> in Facebook, TikTok or YouTube on an iPhone. You set it up once and it takes about two minutes.</p>'
@@ -1384,6 +1383,8 @@ render();
 incoming();
 fetchPreviews();
 if(WEB){ prunePreviews(); hydrateThumbs(); inboxCheck(false); }
+/* While the app is open on screen, collect links shared from the iPhone Share menu every 10 seconds. */
+if(WEB) setInterval(() => { if(document.visibilityState==='visible' && inboxCode()) inboxCheck(false); }, 10000);
 </script>
 <script>
 /* Web version: keep a copy of the app on the phone so it opens with no internet. */
