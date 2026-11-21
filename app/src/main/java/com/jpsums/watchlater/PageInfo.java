@@ -17,6 +17,8 @@ public final class PageInfo {
     public String title = "";
     public String desc = "";
     public String image = "";
+    /** A second place to look for the picture (TikTok's player page), tried if the first one fails. */
+    public String alt = "";
 
     private static final Pattern META = Pattern.compile("<meta\\b[^>]*>", Pattern.CASE_INSENSITIVE);
     private static final Pattern ATTR = Pattern.compile(

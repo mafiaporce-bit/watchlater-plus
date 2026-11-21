@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 // saved thumbnails, shown in the list as /thumbs/<video id>.jpg
                 .addPathHandler("/thumbs/", new WebViewAssetLoader.InternalStoragePathHandler(this, Previews.thumbsDir(this)))
+                // icons of the apps on this phone (Facebook, TikTok...), shown as /icons/<site>.png
+                .addPathHandler("/icons/", new WebViewAssetLoader.InternalStoragePathHandler(this, AppIcons.dir(this)))
                 .build();
 
         webView = new WebView(this);
@@ -234,6 +236,15 @@ public class MainActivity extends Activity {
         /* ----- Part 2 ----- */
 
         /** Titles and thumbnails fetched so far, as JSON keyed by video id. */
+        @JavascriptInterface
+        public String appIcons() {
+            try {
+                return AppIcons.build(getApplicationContext());
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
+
         @JavascriptInterface
         public String getPreviews() {
             return Previews.readRaw(MainActivity.this);

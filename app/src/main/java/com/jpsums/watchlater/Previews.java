@@ -260,7 +260,7 @@ public final class Previews {
     }
 
     /** Bump when the way of fetching gets better, so videos that got nothing before are tried again. */
-    private static final int METHOD = 2;
+    private static final int METHOD = 3;
 
     private static final String HTML = "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.5";
     private static final String UA_DESKTOP = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -291,6 +291,20 @@ public final class Previews {
         if (!yt && !info.image.isEmpty()) {
             thumb = saveThumb(c, id, info.image);
             log.append(thumb ? "; picture saved" : "; picture could not be downloaded");
+        }
+        if (!yt && !thumb && !info.alt.isEmpty()) {
+            // TikTok: the picture link from its info did not work, take the cover from its player page
+            try {
+                String cover = tiktokCover(info.alt, null);
+                if (!cover.isEmpty() && !cover.equals(info.image)) {
+                    thumb = saveThumb(c, id, cover);
+                    log.append(thumb ? "; cover saved" : "; cover could not be downloaded");
+                } else {
+                    log.append("; no cover in player");
+                }
+            } catch (Exception e) {
+                log.append("; player not reachable");
+            }
         }
 
         boolean learnedAlready = false;
@@ -437,27 +451,117 @@ public final class Previews {
         return p;
     }
 
+    private static final java.util.regex.Pattern TT_ID = java.util.regex.Pattern.compile(
+            "/(?:video|photo|v)/(\\d{8,25})|[?&](?:item_id|share_item_id|aweme_id)=(\\d{8,25})");
+    private static final java.util.regex.Pattern TT_PAGE = java.util.regex.Pattern.compile(
+            "tiktok\\.com(?:\\\\?/|/)@([\\w.\\-]+)(?:\\\\?/|/)(?:video|photo)(?:\\\\?/|/)(\\d{8,25})");
+    private static final java.util.regex.Pattern TT_USER = java.util.regex.Pattern.compile("/@([\\w.\\-]+)");
+    private static final java.util.regex.Pattern TT_COVER = java.util.regex.Pattern.compile(
+            "\"(?:originCover|cover|dynamicCover|thumbnailUrl|thumbnail_url)\"\\s*:\\s*\\[?\\s*\"(https?:[^\"]+)\"");
+    private static final java.util.regex.Pattern TT_DESC = java.util.regex.Pattern.compile(
+            "\"desc\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.){3,400})\"");
+
+    static String tiktokId(String url) {
+        if (url == null) return "";
+        java.util.regex.Matcher m = TT_ID.matcher(url);
+        if (!m.find()) return "";
+        return m.group(1) != null ? m.group(1) : m.group(2);
+    }
+
+    static String tiktokUser(String url) {
+        if (url == null) return "";
+        java.util.regex.Matcher m = TT_USER.matcher(url);
+        return m.find() ? m.group(1) : "";
+    }
+
+    /** Undoes the escaping inside a JSON string found in a page ("https:\u002F\u002F..."). */
+    static String unjson(String s) {
+        try {
+            return new JSONArray("[\"" + s + "\"]").getString(0);
+        } catch (JSONException e) {
+            return s.replace("\\u002F", "/").replace("\\/", "/").replace("\\u0026", "&");
+        }
+    }
+
+    /** The cover picture (and words, into p if given) from TikTok's player page for one video. */
+    private static String tiktokCover(String embedUrl, PageInfo p) throws IOException {
+        Resp e = http(embedUrl, 900000, true, HTML);
+        if (e.body == null) return "";
+        String html = e.text();
+        String cover = "";
+        java.util.regex.Matcher m = TT_COVER.matcher(html);
+        while (m.find()) {
+            String u = unjson(m.group(1));
+            if (u.startsWith("https://")) { cover = u; break; }
+        }
+        PageInfo og = PageInfo.parse(html);
+        if (cover.isEmpty() && og.image.startsWith("https://")) cover = og.image;
+        if (p != null) {
+            if (p.title.isEmpty()) {
+                java.util.regex.Matcher d = TT_DESC.matcher(html);
+                if (d.find()) p.title = PageInfo.cleanTitle(unjson(d.group(1)));
+            }
+            fill(p, og);
+        }
+        return cover;
+    }
+
+    /**
+     * TikTok: share links are short (vt.tiktok.com/...). Asking TikTok's info service about the
+     * short link itself can describe the creator instead of the video, so follow the link first,
+     * find the video number, and ask about the real video. If its picture is missing, the
+     * player page (made for other sites) has the cover.
+     */
     private static PageInfo tiktok(String url, StringBuilder log) throws IOException {
+        PageInfo best = new PageInfo();
+        String vid = tiktokId(url), user = tiktokUser(url);
+        Resp page = null;
+        if (vid.isEmpty()) {
+            page = http(url, 900000, true, HTML);
+            log.append("TikTok link ").append(page.code);
+            for (String u : page.hops) {
+                if (vid.isEmpty()) vid = tiktokId(u);
+                if (user.isEmpty()) user = tiktokUser(u);
+            }
+            if (vid.isEmpty() && page.body != null) {
+                // the page itself names its video address (canonical link / og:url)
+                java.util.regex.Matcher m = TT_PAGE.matcher(page.text());
+                if (m.find()) {
+                    vid = m.group(2);
+                    if (user.isEmpty()) user = m.group(1);
+                }
+            }
+            log.append(vid.isEmpty() ? " (no video number)" : " (video " + vid + ")");
+        }
+
+        if (!vid.isEmpty()) {
+            String real = "https://www.tiktok.com/@" + (user.isEmpty() ? "tiktok" : user) + "/video/" + vid;
+            Resp r = http("https://www.tiktok.com/oembed?url=" + enc(real), 200000, false, HTML);
+            PageInfo x = oembed(r.text());
+            log.append("; info ").append(r.code).append(found(x));
+            fill(best, x);
+            best.alt = "https://www.tiktok.com/embed/v2/" + vid;
+            if (best.image.isEmpty() || best.title.isEmpty()) {
+                PageInfo y = new PageInfo();
+                String cover = tiktokCover(best.alt, y);
+                if (best.image.isEmpty()) best.image = cover;
+                fill(best, y);
+                log.append("; player").append(cover.isEmpty() ? " no cover" : " cover");
+            }
+            if (!best.title.isEmpty() || !best.image.isEmpty()) return best;
+        }
+
+        // no video number (a profile or a photo post): ask about the link as it is
         Resp r = http("https://www.tiktok.com/oembed?url=" + enc(url), 200000, false, HTML);
-        PageInfo p = oembed(r.text());
-        log.append("TikTok info ").append(r.code).append(found(p));
-        if (!p.title.isEmpty() || !p.image.isEmpty()) return p;
-        // a short link (vm.tiktok.com): find the real address first, then ask again
-        Resp page = http(url, 600000, false, HTML);
-        log.append("; page ").append(page.code);
-        if (!page.finalUrl.equals(url) && on(host(page.finalUrl), "tiktok.com")) {
-            String real = page.finalUrl;
-            int q = real.indexOf('?');
-            if (q > 0) real = real.substring(0, q);
-            Resp r2 = http("https://www.tiktok.com/oembed?url=" + enc(real), 200000, false, HTML);
-            p = oembed(r2.text());
-            log.append("; info again ").append(r2.code).append(found(p));
+        PageInfo x = oembed(r.text());
+        log.append("; link info ").append(r.code).append(found(x));
+        fill(best, x);
+        if (best.image.isEmpty() && page != null && page.body != null) {
+            PageInfo y = PageInfo.parse(page.text());
+            fill(best, y);
+            log.append("; from page").append(found(y));
         }
-        if (p.title.isEmpty() && p.image.isEmpty() && page.body != null) {
-            p = PageInfo.parse(page.text());
-            log.append("; from page").append(found(p));
-        }
-        return p;
+        return best;
     }
 
     /**
@@ -553,6 +657,7 @@ public final class Previews {
         int code = 0;
         String finalUrl = "";
         byte[] body;
+        final java.util.List<String> hops = new java.util.ArrayList<String>();
 
         String text() {
             return body == null ? null : new String(body, StandardCharsets.UTF_8);
@@ -576,6 +681,10 @@ public final class Previews {
      * Throws when there is no connection at all.
      */
     private static Resp http(String url, int maxBytes, boolean desktop, String accept) throws IOException {
+        return http(url, maxBytes, desktop, accept, null);
+    }
+
+    private static Resp http(String url, int maxBytes, boolean desktop, String accept, String referer) throws IOException {
         Resp r = new Resp();
         String current = url;
         java.util.Map<String, String> cookies = new java.util.LinkedHashMap<String, String>();
@@ -583,6 +692,7 @@ public final class Previews {
         for (int hop = 0; hop < 8; hop++) {
             if (current.regionMatches(true, 0, "http://", 0, 7)) current = "https://" + current.substring(7);
             r.finalUrl = current;
+            r.hops.add(current);
             if (!current.regionMatches(true, 0, "https://", 0, 8)) {
                 r.code = -1;
                 return r;
@@ -595,6 +705,7 @@ public final class Previews {
                 con.setRequestProperty("User-Agent", desktop ? UA_DESKTOP : phoneAgent());
                 con.setRequestProperty("Accept", accept);
                 con.setRequestProperty("Accept-Language", "en-US,en;q=0.9");
+                if (referer != null) con.setRequestProperty("Referer", referer);
                 if (page) {
                     con.setRequestProperty("Sec-Fetch-Dest", "document");
                     con.setRequestProperty("Sec-Fetch-Mode", "navigate");
@@ -652,8 +763,14 @@ public final class Previews {
     /** Downloads the preview picture, shrinks it and keeps it on the phone (the web copies expire). */
     private static boolean saveThumb(Context c, String id, String imageUrl) {
         try {
-            Resp r = http(imageUrl, 4 * 1024 * 1024, false, "image/avif,image/webp,image/*,*/*;q=0.5");
-            return r.body != null && saveThumbBytes(c, id, r.body);
+            // ask for plain picture types: some sites send AVIF/HEIC otherwise, which older phones cannot open
+            String accept = "image/webp,image/jpeg,image/png,image/*;q=0.8,*/*;q=0.5";
+            String h = host(imageUrl);
+            String ref = h.contains("tiktok") ? "https://www.tiktok.com/" : null;
+            Resp r = http(imageUrl, 4 * 1024 * 1024, false, accept, ref);
+            if (r.body != null && saveThumbBytes(c, id, r.body)) return true;
+            Resp r2 = http(imageUrl, 4 * 1024 * 1024, true, accept, ref);
+            return r2.body != null && saveThumbBytes(c, id, r2.body);
         } catch (Exception e) {
             return false;
         }
