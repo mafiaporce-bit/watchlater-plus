@@ -411,11 +411,6 @@ async function facebook(ctx, url) {
     log.push('; phone page ' + m.code + (wall2 ? ' (asked to log in)' : ''));
     if (m.body && !wall2) { const x = parseFacebook(text(m)); fill(best, x); log.push(found(x)); }
   }
-  if (!best.image) {
-    // Facebook's own address for a public video's picture
-    const vid = facebookId(url, r.finalUrl);
-    if (vid) { best.image = 'https://graph.facebook.com/' + vid + '/picture'; log.push('; trying the video picture address'); }
-  }
   return best;
 }
 
