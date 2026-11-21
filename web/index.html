@@ -160,6 +160,23 @@ main{flex:1;overflow-y:auto;padding:4px 14px 120px;-webkit-overflow-scrolling:to
 .cfoot .more{width:36px;height:36px;flex:none}
 
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+/* Folders as albums: a cover made of the latest videos, name and count underneath */
+.albums{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 12px}
+.album{display:flex;flex-direction:column;text-align:left;min-width:0}
+.cover{position:relative;display:grid;gap:2px;aspect-ratio:1;border-radius:16px;overflow:hidden;background:var(--surface);isolation:isolate}
+.cover.n2{grid-template-columns:1fr 1fr}
+.cover.n4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+.cover .cell{position:relative;overflow:hidden;min-height:0}
+.cover .cell img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1}
+.cover .cell .tile{position:absolute;inset:0}
+.cover .dot{position:absolute;top:9px;right:9px;width:11px;height:11px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);z-index:2}
+.cempty{display:grid;place-items:center;height:100%;border:1.5px dashed var(--line);border-radius:16px;font-size:30px;filter:grayscale(1);opacity:.45}
+.cover:has(.cempty){background:none}
+.cnew{place-items:center;align-content:center;gap:6px;background:none;border:1.5px dashed var(--line);color:var(--muted);font-weight:700;font-size:14px}
+.cnew svg{width:24px;height:24px}
+.anm{display:flex;align-items:center;gap:6px;margin:9px 2px 0;font-weight:700;font-size:15px;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aem{font-size:14px;flex:none}
+.asub{margin:2px 2px 0;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .fcard{background:var(--surface);border-radius:var(--r);padding:14px;text-align:left;min-height:124px;display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden}
 .fcard .em{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:24px;background:var(--tint,var(--surface2))}
 .fcard .nm{font-weight:800;font-size:16px;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -719,14 +736,28 @@ function isTall(url){
   const u = String(url||'').toLowerCase(), k = srcOf(url).k;
   return k==='tt' || /\/reel|\/share\/r\/|\/shorts\//.test(u);
 }
+/* The picture for a video: YouTube's own, or the one kept on the phone ("" when there is none yet). */
+function thumbSrc(it, small){
+  const p = pv[it.id], y = srcOf(it.url).k==='yt' ? ytId(it.url) : '';
+  if(y) return 'https://i.ytimg.com/vi/'+y+'/'+(small ? 'mqdefault' : 'hqdefault')+'.jpg';
+  if(N) return p && p.i ? 'https://appassets.androidplatform.net/thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '';
+  return thumbNow[it.id] || (p && p.i ? 'thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '');
+}
+/* A folder's cover: its latest videos as a mosaic (1, 2 or 4), like a photo album. */
+function coverHtml(its){
+  const latest = its.slice().sort((a,b) => (b.addedAt||0) - (a.addedAt||0)), n = latest.length >= 4 ? 4 : latest.length >= 2 ? 2 : latest.length;
+  return latest.slice(0, n).map(it => {
+    const s = srcOf(it.url), src = thumbSrc(it, true);
+    return '<span class="cell"><span class="tile '+(['yt','fb','tt','ig','x'].includes(s.k) ? s.k : 'web')+'"></span>'
+      + (src ? '<img src="'+esc(src)+'" alt="" loading="lazy" onerror="this.remove()">' : '')+'</span>';
+  }).join('');
+}
 function itemHtml(it, lay){
   lay = lay || 'list';
   const s = srcOf(it.url), f = folder(it.folderId), y = s.k==='yt' ? ytId(it.url) : '';
   const tile = '<span class="tile '+(['yt','fb','tt','ig','x'].includes(s.k) ? s.k : 'web')+'"><span class="tname">'+esc(s.name)+'</span></span>';
   const p = pv[it.id];
-  const src = y ? 'https://i.ytimg.com/vi/'+y+'/'+(lay==='list' ? 'mqdefault' : 'hqdefault')+'.jpg'
-    : N ? (p && p.i ? 'https://appassets.androidplatform.net/thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : '')
-    : (thumbNow[it.id] || (p && p.i ? 'thumbs/'+encodeURIComponent(it.id)+'.jpg?'+(Number(p.a)||0) : ''));
+  const src = thumbSrc(it, lay==='list');
   const img = src ? '<img src="'+esc(src)+'" alt="" loading="lazy" onerror="this.remove()">' : '';
   const under = underTitle(it);
   /* Grid: every card the same shape, so rows line up like a gallery. Big: the video's own shape. */
@@ -838,13 +869,19 @@ function render(){
   }
   else if(st.view==='folders'){
     top.innerHTML = '<div class="hgrow"><div class="htitle">Folders</div></div><div class="count"><strong>'+data.folders.length+'</strong>folders</div>';
-    main.innerHTML = '<div class="grid">' + data.folders.map((f,i) => {
-      const its = data.items.filter(x => x.folderId===f.id), w = its.filter(x => !x.watched).length;
-      return '<button class="fcard" data-act="folder" data-id="'+esc(f.id)+'" style="--tint:'+TINTS[i % TINTS.length]+'">'
-        + (w ? '<span class="badge">'+w+'</span>' : '')
-        + '<span class="em">'+esc(f.emoji||'📁')+'</span><span class="nm">'+esc(f.name)+'</span>'
-        + '<span class="ct">'+its.length+(its.length===1?' video':' videos')+'</span></button>';
-    }).join('') + '<button class="fcard new" data-act="folder-new">'+IC.plus+'New folder</button></div>' + FOOT;
+    /* albums: folders with videos first (newest activity on top), empty ones after */
+    const rows = data.folders.map((f,i) => {
+      const its = data.items.filter(x => x.folderId===f.id);
+      return {f, i, its, last: its.reduce((m,x) => Math.max(m, x.addedAt||0), 0)};
+    }).sort((a,b) => (b.its.length ? 1 : 0) - (a.its.length ? 1 : 0) || b.last - a.last || a.i - b.i);
+    main.innerHTML = '<div class="albums">' + rows.map(({f, its}) => {
+      const w = its.filter(x => !x.watched).length, n = Math.min(its.length >= 4 ? 4 : its.length >= 2 ? 2 : its.length, 4);
+      const sub = its.length ? its.length+(its.length===1?' video':' videos')+(w ? ' · '+w+' to watch' : ' · all watched') : 'No videos yet';
+      return '<button class="album" data-act="folder" data-id="'+esc(f.id)+'">'
+        + '<span class="cover n'+n+'">'+(its.length ? coverHtml(its) : '<span class="cempty">'+esc(f.emoji||'📁')+'</span>')+(w ? '<span class="dot" aria-label="Videos to watch"></span>' : '')+'</span>'
+        + '<span class="anm"><span class="aem">'+esc(f.emoji||'📁')+'</span>'+esc(f.name)+'</span>'
+        + '<span class="asub">'+sub+'</span></button>';
+    }).join('') + '<button class="album" data-act="folder-new"><span class="cover cnew">'+IC.plus+'<span>New folder</span></span></button></div>' + FOOT;
   }
   else if(st.view==='folder'){
     const f = folder(st.folderId), its = data.items.filter(i => i.folderId===f.id);
