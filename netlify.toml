@@ -1,0 +1,4 @@
+# The web version of WatchLater+ lives in web/ (the Android app is built by GitHub Actions)
+[build]
+  publish = "web"
+  command = ""

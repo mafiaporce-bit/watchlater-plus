@@ -132,6 +132,7 @@ main{flex:1;overflow-y:auto;padding:4px 14px 120px;-webkit-overflow-scrolling:to
 .btn.ghost{background:var(--surface2);color:var(--text)}
 .btn.danger{background:none;color:var(--hot);border:2px solid var(--line)}
 .btn+.btn{margin-top:10px}
+.btn svg{width:20px;height:20px;flex:none}
 
 .card{background:var(--surface);border-radius:var(--r);padding:16px;margin-bottom:12px}
 .card h4{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)}
@@ -166,6 +167,7 @@ nav button.on{color:var(--accent)}
 textarea.field{height:auto;min-height:96px;padding:12px 14px;resize:none;line-height:1.4;font-size:14.5px}
 .help{font-size:12.5px;color:var(--muted);margin:-6px 2px 12px}
 .line{display:flex;align-items:center;gap:12px}
+.pasterow{display:flex;gap:8px}.pasterow .field{flex:1;min-width:0}.pasterow .btn{width:auto;height:50px;flex:none;padding:0 16px}
 .line .grow{flex:1;min-width:0}
 .line .seg{width:132px;flex:none}
 .card .field{margin:12px 0 0}
@@ -208,8 +210,10 @@ textarea.field{height:auto;min-height:96px;padding:12px 14px;resize:none;line-he
    On the phone, data lives in the app (shared with the Share popup) through WLNative.
    In a normal browser it falls back to localStorage so the page can be previewed. */
 const N = window.WLNative || null;
+/* The web version (Netlify, iPhone): no phone bridge, opened from a real web address. */
+const WEB = !N && /^https?:$/.test(location.protocol);
 const LS_KEY = 'watchlater_plus_v1';
-const VERSION = 'Part 2 + floating button';
+const VERSION = WEB ? 'Web version' : 'Part 2 + floating button';
 const EMOJI = ['🍔','🎤','🏀','😂','📁','🎬','🎵','⚽','🏋️','✈️','🐶','🎮','💡','🛠️','📚','💄','🚗','🧒','💰','🙏','🩺','💃','🎣','⭐'];
 const TINTS = ['#ffb22e33','#ff5c4733','#4f8cff33','#3ecf8e33','#b98bff33','#ff8ad133','#35c9d633','#c9c13a33'];
 
@@ -233,12 +237,19 @@ const IC = {
 };
 
 /* ---------- data ---------- */
+const STARTER = {
+  food:'food, foodie, recipe, cook, cooking, cooked, kitchen, chef, eat, eating, mukbang, delicious, yummy, tasty, restaurant, street food, bake, baking, cake, dessert, pork, chicken, beef, seafood, rice, noodles, pasta, pizza, burger, bbq, grill, grilled, fried, air fryer, adobo, sinigang, lechon, sisig, ulam, luto, lutong, pagkain, merienda, masarap, sarap, shawarma, biryani, breakfast, lunch, dinner, snack',
+  singing:'sing, sings, singing, singer, sang, song, cover, karaoke, videoke, vocal, vocals, acoustic, duet, concert, lyrics, music video, ballad, high note, birit, kanta, kumanta, awit, wish 107, the voice, got talent, choir, live band',
+  basketball:'basketball, nba, pba, fiba, uaap, gilas, ginebra, dunk, three pointer, buzzer beater, triple double, playoffs, crossover, layup, hoops, lakers, warriors, celtics, bulls, knicks, mavericks, mavs, nuggets, bucks, suns, clippers, spurs, sixers, lebron, curry, jokic, doncic, luka, giannis, durant, kobe, jordan, wembanyama, kyrie, tatum',
+  funny:'funny, comedy, comedian, joke, prank, meme, lol, laugh, laughing, hilarious, fail, bloopers, stand up, standup, skit, parody, tawa, nakakatawa, laptrip, laugh trip, biro'
+};
+const starter = id => STARTER[id].split(/,\s*/);
 function defaults(){
   return {v:2, folders:[
-    {id:'food',name:'Food',emoji:'🍔',words:['food','recipe','cooking','pork','chicken','adobo','ulam','masarap']},
-    {id:'singing',name:'Singing',emoji:'🎤',words:['sing','singing','sang','song','cover','karaoke','kanta']},
-    {id:'basketball',name:'Basketball',emoji:'🏀',words:['basketball','nba','pba','dunk','lakers','jokic','curry']},
-    {id:'funny',name:'Funny',emoji:'😂',words:['funny','comedy','joke','prank','meme','laugh']},
+    {id:'food',name:'Food',emoji:'🍔',words:starter('food')},
+    {id:'singing',name:'Singing',emoji:'🎤',words:starter('singing')},
+    {id:'basketball',name:'Basketball',emoji:'🏀',words:starter('basketball')},
+    {id:'funny',name:'Funny',emoji:'😂',words:starter('funny')},
     {id:'other',name:'Other',emoji:'📁'}
   ], items:[], settings:{theme:'auto'}};
 }
@@ -278,8 +289,77 @@ function loadIcons(){
   try{ const o = JSON.parse(N.appIcons()); return o && typeof o==='object' ? o : {}; }catch(e){ return {}; }
 }
 let appIc = loadIcons();
+/* ---------- auto-sort for the web version (same rules as the phone app's Sorter.java) ---------- */
+const SORT = (() => {
+  const STOP = new Set(('the and for with this that you your how from what when why who are was were will can not but all any out '
+    + 'our his her him she they them their its has have had just now new one two get got see too very more most '
+    + 'into over here there then than about after before back best top full part official video videos reel reels '
+    + 'watch short shorts clip clips post story live views view likes like share shares comments comment follow '
+    + 'facebook youtube tiktok instagram twitter com www http https '
+    + 'ang mga nang para lang naman yung ito iyan kung hindi ako ikaw siya niya nila namin natin din rin pag may '
+    + 'wala ano sino saan kasi daw raw pala talaga sobra grabe').split(' '));
+  const BIG = ['facebook.com','fb.watch','fb.com','fb.gg','youtube.com','youtu.be','tiktok.com','instagram.com','x.com','twitter.com','t.co'];
+  const LKEY = 'watchlater_learned';
+  const norm = s => ' ' + String(s||'').toLowerCase().replace(/https?:\/\/\S+/g,' ').replace(/[^\p{L}\p{N}]+/gu,' ').trim() + ' ';
+  function tokens(s){
+    const out = [];
+    for(const w of norm(s).trim().split(' ')){
+      if(w.length < 3 || w.length > 30 || STOP.has(w) || /^\d+$/.test(w) || out.includes(w)) continue;
+      out.push(w); if(out.length >= 40) break;
+    }
+    return out;
+  }
+  function hostToken(url){
+    let h = ''; try{ h = new URL(url).hostname.toLowerCase(); }catch(e){ return ''; }
+    h = h.replace(/^(www|m|web|mobile|vm|vt)\./,'');
+    if(!h.includes('.') || BIG.some(b => h===b || h.endsWith('.'+b))) return '';
+    return '@' + h;
+  }
+  function has(text, key){
+    const k = norm(key).trim(); if(k.length < 2) return false;
+    if(text.includes(' '+k+' ')) return true;
+    if(k.includes(' ')) return false;
+    return text.includes(' '+k+'s ') || text.includes(' '+k+'es ');
+  }
+  function load(){ try{ const o = JSON.parse(localStorage.getItem(LKEY) || '{}'); return o && typeof o==='object' ? o : {}; }catch(e){ return {}; } }
+  function suggest(text, url, folders){
+    const t = norm(text), toks = tokens(text), ht = hostToken(url), learned = load();
+    if(ht) toks.push(ht);
+    if(!t.trim() && !ht) return null;
+    let bestId = '', best = 0, second = 0;
+    for(const f of folders){
+      if(!f || !f.id || f.id==='other') continue;
+      let score = 0; const seen = new Set();
+      for(const w of (Array.isArray(f.words) ? f.words : [])){ const k = norm(w).trim(); if(!k || seen.has(k)) continue; seen.add(k); if(has(t,k)) score += 3; }
+      for(const w of norm(f.name).trim().split(' ')){ if(w.length < 3 || STOP.has(w) || seen.has(w)) continue; seen.add(w); if(has(t,w)) score += 3; }
+      for(const tok of toks){
+        const m = learned[tok]; if(!m) continue;
+        const mine = m[f.id] || 0; if(mine < 2) continue;
+        const total = Object.values(m).reduce((a,b) => a + (Number(b)||0), 0);
+        if(mine*10 >= total*6) score += Math.min(mine,4) * 0.75;
+      }
+      if(score > best){ second = best; best = score; bestId = f.id; } else if(score > second) second = score;
+    }
+    if(best < 1.5 || best <= second) return null;
+    return {id:bestId, sure: best >= 3 && best - second >= 1.5};
+  }
+  function learn(text, url, folderId, weight){
+    if(!folderId || folderId==='other') return;
+    const learned = load(); let toks = tokens(text).slice(0,25); const ht = hostToken(url); if(ht) toks.push(ht);
+    for(const tok of toks){ const m = learned[tok] || (learned[tok] = {}); m[folderId] = Math.min(99, (m[folderId]||0) + Math.max(1, weight||1)); }
+    let keys = Object.keys(learned);
+    if(keys.length > 3000) keys.forEach(k => { const tot = Object.values(learned[k]).reduce((a,b)=>a+b,0); if(tot <= 1) delete learned[k]; });
+    try{ localStorage.setItem(LKEY, JSON.stringify(learned)); }catch(e){}
+  }
+  return {suggest, learn, tokens, hostToken};
+})();
+/* You picked a folder by hand: remember it so similar videos go there next time. */
+function learnIt(text, url, folderId){
+  try{ if(N) N.learn(text, url, folderId); else SORT.learn(text, url, folderId, 2); }catch(e){}
+}
 function suggest(text, url){
-  if(!N || !N.suggest) return null;
+  if(!N) return SORT.suggest(String(text||''), String(url||''), data.folders);
+  if(!N.suggest) return null;
   try{ const r = N.suggest(String(text||''), String(url||'')); return r ? JSON.parse(r) : null; }catch(e){ return null; }
 }
 function remindCfg(){ const r = data.settings.remind || {}; return {on:!!r.on, h:Number.isInteger(r.h)?r.h:20, m:Number.isInteger(r.m)?r.m:0}; }
@@ -362,6 +442,7 @@ function applyTheme(){
   const dark = pref==='dark' || (pref==='auto' && mq.matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   try{ if(N) N.setTheme(dark); }catch(e){}
+  const tc = document.querySelector('meta[name=theme-color]'); if(tc) tc.content = dark ? '#101014' : '#f6f3ec';
 }
 if(mq.addEventListener) mq.addEventListener('change', applyTheme);
 
@@ -433,7 +514,12 @@ function chipsHtml(items){
     + '<div class="lay">'+v('grid',IC.vgrid,'Grid')+v('list',IC.vlist,'List')+v('big',IC.vbig,'Big cards')+'</div></div>';
 }
 const FOOT = '<footer>Copyright © 2026 Zenix_dev@company. All rights reserved. Developed by JPSums</footer>';
-const STEPS = '<div class="steps"><div><i>1</i>Open a video in Facebook, YouTube, TikTok or any app</div><div><i>2</i>Tap <b>&nbsp;Share&nbsp;</b> and choose <b>&nbsp;WatchLater+</b></div><div><i>3</i>Pick a folder. Done, it is saved here.</div></div>';
+const WEB_STEPS = '<div class="steps"><div><i>1</i><span>In Facebook, TikTok, YouTube or any app tap <b>Share</b>, then <b>Copy link</b></span></div><div><i>2</i><span>Open WatchLater+ and tap the <b>+</b> button</span></div><div><i>3</i><span>Tap <b>Paste</b>. It sorts itself into a folder.</span></div></div>';
+const WEB_INSTALL = '<div class="card"><h4>Put it on your Home Screen</h4>'
+  + '<p class="small" style="margin-top:0"><b>iPhone (Safari):</b> tap the Share button at the bottom, then <b>Add to Home Screen</b>.</p>'
+  + '<p class="small"><b>Android (Chrome):</b> tap the three dots, then <b>Add to Home screen</b> or <b>Install app</b>. Then WatchLater+ also shows in the Share menu.</p>'
+  + '<p class="small" style="margin-bottom:0">It then opens like a normal app, even with no internet.</p></div>';
+const STEPS = '<div class="steps"><div><i>1</i><span>Open a video in Facebook, YouTube, TikTok or any app</span></div><div><i>2</i><span>Tap <b>Share</b> and choose <b>WatchLater+</b></span></div><div><i>3</i><span>Pick a folder. Done, it is saved here.</span></div></div>';
 
 function renderList(){ /* only the rows, so typing in search keeps the keyboard open */
   const box = $('#list'); if(!box) return;
@@ -456,8 +542,8 @@ function render(){
   if(st.view==='home'){
     top.innerHTML = '<div class="hgrow"><div class="logo">WatchLater<b>+</b></div></div><div class="count"><strong>'+toWatch+'</strong>to watch</div>';
     if(!data.items.length){
-      main.innerHTML = '<div class="empty"><div class="big">🍿</div><h2>Nothing saved yet</h2>Save a video from any app and it lands here.'+STEPS
-        + (N ? '' : '<button class="btn ghost" data-act="demo" style="margin-top:16px">See it with sample videos</button>') + '</div>' + FOOT;
+      main.innerHTML = '<div class="empty"><div class="big">🍿</div><h2>Nothing saved yet</h2>'+(WEB ? 'Copy a video\'s link in any app and add it here.'+WEB_STEPS : 'Save a video from any app and it lands here.'+STEPS)
+        + ((N || WEB) ? '' : '<button class="btn ghost" data-act="demo" style="margin-top:16px">See it with sample videos</button>') + '</div>' + FOOT;
     } else {
       main.innerHTML = searchBox + chipsHtml(data.items) + '<div id="list"></div>' + FOOT;
       renderList();
@@ -478,7 +564,7 @@ function render(){
     top.innerHTML = '<button class="iconbtn" data-act="back" aria-label="Back">'+IC.back+'</button>'
       + '<div class="hgrow"><div class="htitle">'+esc(f.emoji||'📁')+' '+esc(f.name)+'</div></div>'
       + '<button class="iconbtn" data-act="folder-edit" data-id="'+esc(f.id)+'" aria-label="Edit folder">'+IC.edit+'</button>';
-    const sortBtn = (N && f.id==='other' && its.length) ? '<button class="btn ghost" data-act="sort-other" style="margin-bottom:12px">Auto-sort these into folders</button>' : '';
+    const sortBtn = (f.id==='other' && its.length) ? '<button class="btn ghost" data-act="sort-other" style="margin-bottom:12px">Auto-sort these into folders</button>' : '';
     main.innerHTML = its.length
       ? searchBox + chipsHtml(its) + sortBtn + '<div id="list"></div>' + FOOT
       : '<div class="empty"><div class="big">'+esc(f.emoji||'📁')+'</div><h2>No videos in '+esc(f.name)+' yet</h2>Share a video to WatchLater+ and pick this folder.</div>' + FOOT;
@@ -492,22 +578,22 @@ function render(){
     main.innerHTML = '<div class="card"><h4>Auto-sort</h4><div class="line"><div class="grow"><b>Sort videos for me</b></div>'
       + '<div class="seg">'+seg('autosort','on','On',as)+seg('autosort','off','Off',!as)+'</div></div>'
       + '<p class="small">When a video\'s title matches a folder\'s words, it is saved there without asking. It also learns from the folders you pick. Edit the words from any folder\'s pencil button.</p></div>'
-      + '<div class="card"><h4>Floating button</h4><div class="line"><div class="grow"><b>Save button over other apps</b></div>'
+      + (WEB ? WEB_INSTALL : '<div class="card"><h4>Floating button</h4><div class="line"><div class="grow"><b>Save button over other apps</b></div>'
       + '<div class="seg">'+seg('bubble','on','On',bub)+seg('bubble','off','Off',!bub)+'</div></div>'
       + '<p class="small">In Facebook, TikTok or YouTube tap <b>Share</b>, then <b>Copy link</b>, then tap the round WatchLater+ button. Drag it to move it. Press and hold it to turn it off.</p>'
       + (bub ? '' : '<p class="small">The first time, your phone asks you to allow <b>Appear on top</b>. If that switch is greyed out, open the phone\'s Settings, Apps, WatchLater+, tap the three dots at the top right and choose <b>Allow restricted settings</b>, then try again.</p>')
-      + '</div>'
-      + '<div class="card"><h4>Reminder</h4><div class="line"><div class="grow"><b>Remind me every day</b></div>'
+      + '</div>')
+      + (WEB ? '' : '<div class="card"><h4>Reminder</h4><div class="line"><div class="grow"><b>Remind me every day</b></div>'
       + '<div class="seg">'+seg('remind','on','On',rc.on)+seg('remind','off','Off',!rc.on)+'</div></div>'
       + (rc.on ? '<input class="field" id="f-time" type="time" value="'+two(rc.h)+':'+two(rc.m)+'" aria-label="Reminder time">'
           + '<button class="btn ghost" data-act="test-remind">Send a test reminder now</button>' : '')
-      + '<p class="small">'+(rc.on ? 'Around this time each day, if you still have videos to watch.' : 'A notification with the videos you have not watched yet.')+'</p></div>'
+      + '<p class="small">'+(rc.on ? 'Around this time each day, if you still have videos to watch.' : 'A notification with the videos you have not watched yet.')+'</p></div>')
       + '<div class="card"><h4>Look</h4><div class="seg">'+seg('theme','auto','Auto',th==='auto')+seg('theme','light','Light',th==='light')+seg('theme','dark','Dark',th==='dark')+'</div>'
       + '<div class="seg" style="margin-top:10px">'+seg('layout','grid','Grid',layout()==='grid')+seg('layout','list','List',layout()==='list')+seg('layout','big','Big cards',layout()==='big')+'</div>'
       + '<p class="small">How videos are shown on Home and in folders. You can also switch with the buttons next to All / To watch / Watched.</p></div>'
-      + '<div class="card"><h4>How to save a video</h4>'+STEPS.replace('class="steps"','class="steps" style="margin:0;padding:0;background:none"')+'</div>'
+      + '<div class="card"><h4>How to save a video</h4>'+(WEB ? WEB_STEPS : STEPS).replace('class="steps"','class="steps" style="margin:0;padding:0;background:none"')+'</div>'
       + '<div class="card"><h4>About</h4><div><b>WatchLater+</b> · '+esc(VERSION)+'</div><p class="small" style="margin:6px 0 0">'
-      + data.items.length+' videos in '+data.folders.length+' folders. Your list is kept on this phone.</p></div>' + FOOT;
+      + data.items.length+' videos in '+data.folders.length+' folders. '+(WEB ? 'Your list is kept in this browser on this phone, and the app opens even with no internet.' : 'Your list is kept on this phone.')+'</p></div>' + FOOT;
   }
 }
 
@@ -555,7 +641,9 @@ let addFolder = 'other', addPicked = false;
 function addSheet(){
   addFolder = st.view==='folder' ? st.folderId : 'other'; addPicked = st.view==='folder';
   sheet('<h2>Add a video link</h2><p class="sub">Paste a link here, or use Share in any app.</p>'
-    + '<label class="lbl" for="f-url">Link</label><input class="field" id="f-url" type="url" inputmode="url" placeholder="https://..." autocomplete="off">'
+    + '<label class="lbl" for="f-url">Link</label>'
+    + (navigator.clipboard && navigator.clipboard.readText ? '<div class="pasterow"><input class="field" id="f-url" type="url" inputmode="url" placeholder="https://..." autocomplete="off"><button class="btn ghost" data-act="paste">Paste</button></div>'
+      : '<input class="field" id="f-url" type="url" inputmode="url" placeholder="https://..." autocomplete="off">')
     + '<label class="lbl" for="f-name">Name (optional)</label><input class="field" id="f-name" maxlength="200" placeholder="e.g. Crispy pork belly recipe" autocomplete="off">'
     + '<span class="lbl" id="f-flbl">Folder</span><div data-add="1">'+pickHtml(addFolder)+'</div>'
     + '<button class="btn" data-act="save-add">Save</button>');
@@ -639,8 +727,19 @@ document.addEventListener('click', e => {
     case 'open': closeSheet(); openItem(id); break;
     case 'toggle': closeSheet(); mutate(d => { const it = d.items.find(i => i.id===id); if(it) it.watched = !it.watched; }); break;
     case 'menu': menuSheet(id); break;
-    case 'close': closeSheet(); break;
+    case 'close': incPending = null; closeSheet(); break;
     case 'add': addSheet(); break;
+    case 'paste': {
+      navigator.clipboard.readText().then(t => {
+        const u = fixUrl(t); if(!u){ toast('No link copied yet'); return; }
+        const f = $('#f-url'), n = $('#f-name'); if(!f) return;
+        f.value = u;
+        const rest = String(t).replace(/https?:\/\/\S+/i,'').trim();
+        if(n && !n.value && rest) n.value = cleanShared(rest).slice(0,200);
+        addSuggest();
+      }).catch(() => toast('Allow pasting, or long-press the box and tap Paste'));
+      break;
+    }
     case 'demo': demo(); break;
     case 'theme': mutate(d => { d.settings.theme = el.dataset.k; }); break;
     case 'autosort': mutate(d => { d.settings.autoSort = el.dataset.k==='on'; }); break;
@@ -685,12 +784,13 @@ document.addEventListener('click', e => {
     }
     case 'pick': {
       const mv = el.closest('[data-move]');
+      if(el.closest('[data-inc]')){ closeSheet(); if(incPending) saveIncoming(incPending.url, incPending.title, id); break; }
       if(mv){
         const vid = mv.dataset.move, f = folder(id); closeSheet();
         const before = item(vid);
         mutate(d => { const it = d.items.find(i => i.id===vid); if(it){ it.folderId = id; it.manual = true; } });
         /* you moved it by hand: remember, so similar videos go there next time */
-        try{ if(N && before && id!=='other') N.learn(textOf(before), before.url, id); }catch(err){}
+        if(before && id!=='other') learnIt(textOf(before), before.url, id);
         toast('Moved to ' + f.name);
       } else {
         addFolder = id; addPicked = true;
@@ -717,13 +817,14 @@ document.addEventListener('click', e => {
         else d.items.push({id:uid('v'), url, title:name, folderId:f.id, addedAt:Date.now(), watched:false, manual:addPicked});
       });
       try{
-        if(N && addPicked && f.id!=='other') N.learn(name, url, f.id);
+        if(addPicked && f.id!=='other') learnIt(name, url, f.id);
         if(N) N.fetchPreviews();
       }catch(err){}
       toast('Saved to ' + f.name);
       break;
     }
-    case 'folder-new': folderSheet(''); break;
+    case 'folder-new': incPending = null; folderSheet(''); break;
+    case 'new-from-inc': folderSheet(''); break;
     case 'folder-edit': folderSheet(id); break;
     case 'emoji': editEmoji = el.dataset.e; el.parentNode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b===el)); break;
     case 'save-folder': {
@@ -738,6 +839,7 @@ document.addEventListener('click', e => {
         if(f){ f.name = name; f.emoji = editEmoji; if(words) f.words = words; }
         else { const at = d.folders.findIndex(x => x.id==='other'); d.folders.splice(at < 0 ? d.folders.length : at, 0, {id:uid('f'), name, emoji:editEmoji, words:words||[]}); }
       });
+      if(!id && incPending){ const nf = data.folders.find(f => f.name===name); if(nf){ saveIncoming(incPending.url, incPending.title, nf.id); break; } }
       toast(id ? 'Folder updated' : 'Folder added');
       break;
     }
@@ -800,10 +902,50 @@ window.WLBubbleDenied = function(){
   mutate(d => { d.settings.bubble = false; });
   toast('Allow "Appear on top" for WatchLater+ first');
 };
+/* ---------- web version: a link sent in from outside ---------- */
+/* Android (installed web app) Share menu sends ?title=&text=&url=; the iPhone shortcut sends ?add=<link>. */
+let incPending = null;
+function incoming(){
+  if(N) return;
+  let q; try{ q = new URLSearchParams(location.search); }catch(e){ return; }
+  const raw = ['add','url','text','title'].map(k => q.get(k)).filter(Boolean).join(' ').trim();
+  if(!raw) return;
+  try{ history.replaceState(null, '', location.pathname); }catch(e){}
+  const url = fixUrl(raw);
+  if(!url){ toast('No link found in what was shared'); return; }
+  const title = cleanShared(raw.replace(/https?:\/\/\S+/gi,' ').replace(/\s+/g,' ').trim()).slice(0, 200);
+  saveIncoming(url, title, '');
+}
+/* Save it: to the folder you picked, the folder it already had, or the one auto-sort is sure of. Else ask. */
+function saveIncoming(url, title, picked){
+  const old = data.items.find(i => i.url===url);
+  const g = (!picked && !old && autoSortOn()) ? suggest(title, url) : null;
+  const fid = picked || (old && old.folderId) || (g && g.sure && data.folders.some(f => f.id===g.id) ? g.id : '');
+  if(!fid){
+    incPending = {url, title};
+    const hint = g && data.folders.some(f => f.id===g.id) ? g.id : '';
+    sheet('<h2>Save to which folder?</h2><p class="sub">'+esc(title || url)+'</p><div data-inc="1">'+pickHtml(hint)+'</div>'
+      + '<button class="btn ghost" data-act="new-from-inc">'+IC.plus+'New folder</button>');
+    return;
+  }
+  incPending = null;
+  let id = old ? old.id : uid('v');
+  mutate(d => {
+    const o = d.items.find(i => i.url===url);
+    if(o){ o.addedAt = Date.now(); o.watched = false; if(picked){ o.folderId = picked; o.manual = true; } if(title && !o.title) o.title = title; id = o.id; }
+    else d.items.push({id, url, title, folderId:fid, addedAt:Date.now(), watched:false, manual:!!picked});
+  });
+  if(picked && picked!=='other' && title) learnIt(title, url, picked);
+  const f = folder(fid);
+  st.view = 'home'; st.filter = 'all'; st.q = ''; render();
+  sheet('<h2>'+(old ? 'Already saved · ' : 'Saved to ')+esc(f.emoji||'📁')+' '+esc(f.name)+'</h2><p class="sub">'+esc(title || url)+'</p>'
+    + '<button class="btn" data-act="close">Done</button><button class="btn ghost" data-act="m-move" data-id="'+esc(id)+'">Change folder</button>');
+}
 if(!N) document.addEventListener('visibilitychange', () => { if(!document.hidden && askArmed) askWatched(); });
 try{ if(N && N.fetchPreviews) N.fetchPreviews(); }catch(e){}
 
 render();
+incoming();
 </script>
 </body>
 </html>
