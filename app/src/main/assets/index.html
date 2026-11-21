@@ -106,6 +106,20 @@ main{flex:1;overflow-y:auto;padding:4px 14px 120px;-webkit-overflow-scrolling:to
 .lay-grid .item{display:flex!important;flex-direction:column}
 .lay-grid .body{flex:1}
 .lay-grid .body h3{min-height:2.5em}
+#list.cols-3,#list.cols-4{gap:6px}
+.cols-3 .item,.cols-4 .item{border-radius:12px!important}
+.cols-3 .body{padding:7px 8px 0!important}.cols-3 .body h3{font-size:12.5px}
+.cols-3 .cfoot{padding:0 2px 4px 4px;justify-content:space-between}.cols-3 .cfoot .meta{display:none}
+.cols-3 .cfoot .tick{width:28px;height:28px}.cols-3 .cfoot .more{width:26px;height:30px}
+.cols-3 .srcb{width:22px!important;height:22px!important;left:5px!important;top:5px!important}
+.cols-3 .play{width:32px!important;height:32px!important;margin:-16px 0 0 -16px!important}
+.cols-3 .tile .tname,.cols-4 .tile .tname,.cols-4 .cfoot .meta,.cols-4 .note2{display:none}
+.cols-4 .body{padding:5px 6px 0!important}.cols-4 .body h3{font-size:11px;min-height:2.6em}
+.cols-4 .cfoot{padding:0 2px 3px;justify-content:space-between}.cols-4 .cfoot .more{width:24px;height:26px}.cols-4 .cfoot .more svg{width:16px;height:16px}.cols-4 .cfoot .tick{width:24px;height:24px}.cols-4 .cfoot .tick svg{width:12px;height:12px}
+.cols-4 .srcb{width:18px!important;height:18px!important;left:4px!important;top:4px!important}
+.cols-4 .play{width:26px!important;height:26px!important;margin:-13px 0 0 -13px!important}.cols-4 .play svg{width:12px!important;height:12px!important}
+#list.zoomed{animation:zoomin .22s ease-out}
+@keyframes zoomin{from{opacity:.55;transform:scale(.97)}to{opacity:1;transform:none}}
 .lay-grid .item,.lay-big .item{display:block;padding:0;overflow:hidden;margin:0;background:var(--surface);border-radius:var(--r)}
 .lay-big .item{margin-bottom:14px}
 .lay-grid .thumb,.lay-big .thumb{width:100%;height:auto;aspect-ratio:var(--ar);border-radius:0}
@@ -608,6 +622,49 @@ const st = {view:'home', folderId:'', filter:'all', q:'', app:''};
 
 const LAYOUTS = ['grid','list','big'];
 function layout(){ const l = data.settings.layout; return LAYOUTS.includes(l) ? l : 'grid'; }
+/* How many videos per row in Grid: 2, 3 or 4 (pinch to change, like the Gallery). */
+function cols(){ const c = Number(data.settings.cols); return c===3 || c===4 ? c : 2; }
+
+/* ---------- pinch to zoom ----------
+   Pinch in: more videos per row (2 → 3 → 4). Pinch out: fewer (4 → 3 → 2 → one big card each).
+   The video under your fingers stays in place. */
+const ZOOM = [{lay:'big'}, {lay:'grid', cols:2}, {lay:'grid', cols:3}, {lay:'grid', cols:4}];
+function zoomLevel(){ const l = layout(); return l==='big' ? 0 : l==='grid' ? cols() - 1 : -1; }
+let pinch = null;
+function pinchDist(t){ return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+function zoomTo(level, x, y){
+  const box = $('#list'), main = $('#main'); if(!box || !main) return;
+  level = Math.max(0, Math.min(ZOOM.length - 1, level));
+  if(level===zoomLevel()) return;
+  /* remember which video is under the fingers and where it sits on screen */
+  const at = document.elementFromPoint(x, y), card = at && at.closest('.item');
+  const id = card ? card.dataset.id : '', before = card ? card.getBoundingClientRect().top : 0;
+  const z = ZOOM[level];
+  const d = loadData(); d.settings.layout = z.lay; if(z.cols) d.settings.cols = z.cols; saveData(d); data = d;
+  renderList();
+  const lay = document.querySelector('.lay');
+  if(lay) lay.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.k===z.lay));
+  const again = id ? box.querySelector('.item[data-id="'+CSS.escape(id)+'"]') : null;
+  if(again) main.scrollTop += again.getBoundingClientRect().top - before;
+  box.classList.remove('zoomed'); void box.offsetWidth; box.classList.add('zoomed');
+}
+document.addEventListener('touchstart', e => {
+  if(e.touches.length!==2 || sheetOpen || !$('#list') || zoomLevel() < 0) { pinch = null; return; }
+  pinch = {d: pinchDist(e.touches), done: false};
+}, {passive: true});
+document.addEventListener('touchmove', e => {
+  if(!pinch || e.touches.length!==2) return;
+  e.preventDefault();                      /* the app zooms, not the page */
+  const r = pinchDist(e.touches) / pinch.d;
+  if(r > 1.22 || r < 0.82){
+    const x = (e.touches[0].clientX + e.touches[1].clientX) / 2, y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    zoomTo(zoomLevel() + (r > 1 ? -1 : 1), x, y);
+    pinch.d = pinchDist(e.touches);        /* keep pinching for another step */
+  }
+}, {passive: false});
+document.addEventListener('touchend', e => { if(e.touches.length < 2) pinch = null; }, {passive: true});
+/* iPhone Safari: stop its own page zoom so the pinch reaches the app */
+['gesturestart','gesturechange'].forEach(n => document.addEventListener(n, e => { if($('#list')) e.preventDefault(); }, {passive: false}));
 /* Reels and shorts are tall, normal videos are wide: the card shape follows. */
 /* Stand-in badges for apps that are not on the phone (simple shapes, not the apps' logos). */
 const BADGE = {
@@ -703,7 +760,9 @@ function renderList(){ /* only the rows, so typing in search keeps the keyboard 
   const box = $('#list'); if(!box) return;
   const items = st.view==='folder' ? data.items.filter(i => i.folderId===st.folderId) : data.items;
   const html = listHtml(items);
-  box.className = 'lay-' + (html ? layout() : 'list');
+  const lay = html ? layout() : 'list', c = cols();
+  box.className = 'lay-' + lay + (lay==='grid' ? ' cols-' + c : '');
+  box.style.setProperty('--cols', lay==='grid' ? c : 2);
   box.innerHTML = html || '<div class="empty"><div class="big">🔎</div><h2>Nothing here</h2>'+(st.q?'No video matches your search.':'No videos in this list yet.')+'</div>';
 }
 
@@ -768,7 +827,7 @@ function render(){
       + '<p class="small">'+(rc.on ? 'Around this time each day, if you still have videos to watch.' : 'A notification with the videos you have not watched yet.')+'</p></div>')
       + '<div class="card"><h4>Look</h4><div class="seg">'+seg('theme','auto','Auto',th==='auto')+seg('theme','light','Light',th==='light')+seg('theme','dark','Dark',th==='dark')+'</div>'
       + '<div class="seg" style="margin-top:10px">'+seg('layout','grid','Grid',layout()==='grid')+seg('layout','list','List',layout()==='list')+seg('layout','big','Big cards',layout()==='big')+'</div>'
-      + '<p class="small">How videos are shown on Home and in folders. You can also switch with the buttons next to All / To watch / Watched.</p></div>'
+      + '<p class="small">Pinch on the list to see more or fewer videos, like the Gallery. How videos are shown on Home and in folders. You can also switch with the buttons next to All / To watch / Watched.</p></div>'
       + '<div class="card"><h4>How to save a video</h4>'+(WEB ? WEB_STEPS : STEPS).replace('class="steps"','class="steps" style="margin:0;padding:0;background:none"')+'</div>'
       + '<div class="card"><h4>About</h4><div><b>WatchLater+</b> · '+esc(VERSION)+'</div><p class="small" style="margin:6px 0 0">'
       + data.items.length+' videos in '+data.folders.length+' folders. '+(WEB ? 'Your list is kept in this browser on this phone, and the app opens even with no internet.' : 'Your list is kept on this phone.')+'</p></div>' + FOOT;
