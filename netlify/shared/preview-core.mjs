@@ -265,9 +265,11 @@ const isLoginWall = u => { u = (u || '').toLowerCase(); return u.includes('/logi
 
 function oembed(json) {
   const p = info();
+  p.note = ' (no answer)';
   if (!json) return p;
   try {
     const o = JSON.parse(json);
+    p.note = '';
     p.title = cleanTitle(o.title || '');
     const author = String(o.author_name || '').trim();
     if (!p.title && author) p.title = 'Video by ' + author;
@@ -275,7 +277,9 @@ function oembed(json) {
     if (String(o.thumbnail_url || '').startsWith('https://')) p.image = o.thumbnail_url;
     // TikTok answers about the creator (not the video) for links it does not see as a video
     p.profile = o.embed_type === 'profile' || /'s Creator Profile$/i.test(String(o.title || ''));
-  } catch (e) { /* not the answer we hoped for */ }
+    if (p.profile) p.note = ' (about the creator)';
+    else if (!p.title) p.note = ' (said: ' + squash(String(o.message || o.status_msg || o.error || o.code || 'nothing useful')).slice(0, 40) + ')';
+  } catch (e) { p.note = ' (not an info answer)'; }
   return p;
 }
 
@@ -355,7 +359,7 @@ async function tiktok(ctx, url) {
     const r = await http(ctx, 'https://www.tiktok.com/oembed?url=' + enc(real), { max: 200000 });
     const x = oembed(text(r));
     if (x.profile) { x.title = ''; x.desc = ''; x.image = ''; }
-    log.push('; info ' + r.code + found(x));
+    log.push('; info ' + r.code + found(x) + x.note);
     fill(best, x);
     if (!best.image || !best.title) {
       const e = await http(ctx, 'https://www.tiktok.com/embed/v2/' + vid, { max: 900000, desktop: true });
@@ -376,7 +380,7 @@ async function tiktok(ctx, url) {
   // not a video (a creator's page, or something new): describe the link as it is
   const r = await http(ctx, 'https://www.tiktok.com/oembed?url=' + enc(url), { max: 200000 });
   const x = oembed(text(r));
-  log.push('; link info ' + r.code + found(x));
+  log.push('; link info ' + r.code + found(x) + x.note);
   fill(best, x);
   if (!best.image && page && page.body) {
     const y = parse(text(page));
@@ -401,11 +405,16 @@ async function facebook(ctx, url) {
     log.push('; embed ' + e.code + (vid ? '' : ' (no video number)'));
     if (e.body) { const x = parseEmbed(text(e)); fill(best, x); log.push(found(x)); }
   }
-  if (!best.title && !best.image) {
-    const m = await http(ctx, url, { max: 700000 });
+  if (!best.image) {
+    const m = await http(ctx, www, { max: 700000 });
     const wall2 = isLoginWall(m.finalUrl);
     log.push('; phone page ' + m.code + (wall2 ? ' (asked to log in)' : ''));
     if (m.body && !wall2) { const x = parseFacebook(text(m)); fill(best, x); log.push(found(x)); }
+  }
+  if (!best.image) {
+    // Facebook's own address for a public video's picture
+    const vid = facebookId(url, r.finalUrl);
+    if (vid) { best.image = 'https://graph.facebook.com/' + vid + '/picture'; log.push('; trying the video picture address'); }
   }
   return best;
 }
@@ -482,7 +491,7 @@ export async function preview(rawUrl, env = {}) {
     try { i = await picture(ctx, p.image); } catch (e) { i = ''; }
     ctx.log.push(i ? '; picture saved' : '; picture could not be downloaded');
   }
-  const g = ctx.log.join('').slice(0, 400);
+  const g = ctx.log.join('').replace(/^[;\s]+/, '').slice(0, 400);
   if (!ctx.reached) return { ok: false, t: '', d: '', i: '', g: 'The helper could not reach the site' };
   return { ok: true, t: p.title || '', d: p.desc || '', i, g };
 }
