@@ -232,6 +232,10 @@ nav button.on{color:var(--accent)}
 textarea.field{height:auto;min-height:96px;padding:12px 14px;resize:none;line-height:1.4;font-size:14.5px}
 .help{font-size:12.5px;color:var(--muted);margin:-6px 2px 12px}
 .line{display:flex;align-items:center;gap:12px}
+.days{display:flex;gap:6px;margin-top:8px}
+.days button{flex:1;height:40px;border-radius:12px;background:var(--surface2);color:var(--muted);font-weight:800;font-size:14px;border:2px solid transparent}
+.days button.on{background:color-mix(in srgb,var(--accent) 18%,var(--surface2));border-color:var(--accent);color:var(--text)}
+.card .seg button{font-size:13px}
 .pasterow{display:flex;gap:8px}.pasterow .field{flex:1;min-width:0}.pasterow .btn{width:auto;height:50px;flex:none;padding:0 16px}
 .line .grow{flex:1;min-width:0}
 .line .seg{width:132px;flex:none}
@@ -559,7 +563,42 @@ function suggest(text, url){
   if(!N.suggest) return null;
   try{ const r = N.suggest(String(text||''), String(url||'')); return r ? JSON.parse(r) : null; }catch(e){ return null; }
 }
-function remindCfg(){ const r = data.settings.remind || {}; return {on:!!r.on, h:Number.isInteger(r.h)?r.h:20, m:Number.isInteger(r.m)?r.m:0}; }
+function remindCfg(){
+  const r = data.settings.remind || {};
+  const days = Array.isArray(r.days) ? r.days.filter(d => Number.isInteger(d) && d >= 0 && d <= 6) : [];
+  return {on:!!r.on, h:Number.isInteger(r.h)?r.h:20, m:Number.isInteger(r.m)?r.m:0, smart:!!r.smart, days};
+}
+/* Change the reminder settings and tell the phone app to set the next reminder again. */
+function setRemind(change, ask){
+  mutate(d => { const r = remindCfg(); change(r); d.settings.remind = r; });
+  try{ if(N) N.remindersChanged(ask !== false || remindCfg().on); }catch(err){}
+}
+const hourName = h => { const am = h < 12, x = h % 12 || 12; return x + (am ? ' AM' : ' PM'); };
+/* The hour you usually open the app (-1 while still learning). Phone app: from Java. Web: kept in this browser. */
+function usualTime(){
+  if(N){ try{ const o = JSON.parse(N.usualTime ? N.usualTime() : '{}'); return {h:Number.isInteger(o.h) ? o.h : -1, n:o.n || 0}; }catch(e){ return {h:-1, n:0}; } }
+  const o = webHabits(); return {h:habitHour(o.w, o.n), n:o.n};
+}
+/* Same rule as the phone app (Habits.java): a clear favourite time of day, after at least 5 opens. */
+function habitHour(w, n){
+  if(!Array.isArray(w) || w.length!==24 || n < 5) return -1;
+  let best = -1, top = 0; const total = w.reduce((a,b) => a + b, 0);
+  for(let h = 0; h < 24; h++){ const v = w[h] + 0.5*w[(h+23)%24] + 0.5*w[(h+1)%24]; if(v > top){ top = v; best = h; } }
+  return best >= 0 && total > 0 && top/total >= 0.3 ? best : -1;
+}
+function webHabits(){ try{ const o = JSON.parse(localStorage.getItem('watchlater_habits') || '{}'); return {w:Array.isArray(o.w) && o.w.length===24 ? o.w : new Array(24).fill(0), n:o.n||0, last:o.last||0, nudged:o.nudged||''}; }catch(e){ return {w:new Array(24).fill(0), n:0, last:0, nudged:''}; } }
+/* Web version (iPhone): learn when you open the app, and at your usual time say how many videos are waiting. */
+function webHabitOpen(){
+  if(!WEB) return;
+  const o = webHabits(), now = Date.now(), hr = new Date().getHours();
+  if(now - o.last >= 30*60000){ o.w = o.w.map(v => v * 0.97); o.w[hr] += 1; o.n++; o.last = now; }
+  const usual = habitHour(o.w, o.n), today = new Date().toDateString(), waiting = data.items.filter(i => !i.watched).length;
+  if(usual >= 0 && Math.abs(hr - usual) <= 1 && waiting && o.nudged !== today && st.view==='home' && !sheetOpen){
+    o.nudged = today;
+    setTimeout(() => toast(waiting===1 ? '1 video is waiting for you 🍿' : waiting + ' videos are waiting for you 🍿'), 900);
+  }
+  try{ localStorage.setItem('watchlater_habits', JSON.stringify({w:o.w.map(v => Math.round(v*1000)/1000), n:o.n, last:o.last, nudged:o.nudged})); }catch(e){}
+}
 function autoSortOn(){ return data.settings.autoSort !== false; }
 /* Always re-read before a change, so a video saved from the Share popup is never overwritten. */
 function mutate(fn){ const d = loadData(); fn(d); saveData(d); data = d; render(); }
@@ -907,11 +946,7 @@ function render(){
       + '<p class="small">In Facebook, TikTok or YouTube tap <b>Share</b>, then <b>Copy link</b>, then tap the round WatchLater+ button. Drag it to move it. Press and hold it to turn it off.</p>'
       + (bub ? '' : '<p class="small">The first time, your phone asks you to allow <b>Appear on top</b>. If that switch is greyed out, open the phone\'s Settings, Apps, WatchLater+, tap the three dots at the top right and choose <b>Allow restricted settings</b>, then try again.</p>')
       + '</div>')
-      + (WEB ? '' : '<div class="card"><h4>Reminder</h4><div class="line"><div class="grow"><b>Remind me every day</b></div>'
-      + '<div class="seg">'+seg('remind','on','On',rc.on)+seg('remind','off','Off',!rc.on)+'</div></div>'
-      + (rc.on ? '<input class="field" id="f-time" type="time" value="'+two(rc.h)+':'+two(rc.m)+'" aria-label="Reminder time">'
-          + '<button class="btn ghost" data-act="test-remind">Send a test reminder now</button>' : '')
-      + '<p class="small">'+(rc.on ? 'Around this time each day, if you still have videos to watch.' : 'A notification with the videos you have not watched yet.')+'</p></div>')
+      + (WEB ? '' : remindCard(rc, seg, two) + widgetCard())
       + '<div class="card"><h4>Look</h4><div class="seg">'+seg('theme','auto','Auto',th==='auto')+seg('theme','light','Light',th==='light')+seg('theme','dark','Dark',th==='dark')+'</div>'
       + '<div class="seg" style="margin-top:10px">'+seg('layout','grid','Grid',layout()==='grid')+seg('layout','list','List',layout()==='list')+seg('layout','big','Big cards',layout()==='big')+'</div>'
       + '<p class="small">Pinch on the list to see more or fewer videos, like the Gallery. How videos are shown on Home and in folders. You can also switch with the buttons next to All / To watch / Watched.</p></div>'
@@ -919,6 +954,32 @@ function render(){
       + '<div class="card"><h4>About</h4><div><b>WatchLater+</b> · '+esc(VERSION)+'</div><p class="small" style="margin:6px 0 0">'
       + data.items.length+' videos in '+data.folders.length+' folders. '+(WEB ? 'Your list is kept in this browser on this phone, and the app opens even with no internet.' : 'Your list is kept on this phone.')+'</p></div>' + FOOT;
   }
+}
+
+/* Settings: the reminder (set time or "when I usually open the app", and which days). */
+function remindCard(rc, seg, two){
+  const DAYS = ['S','M','T','W','T','F','S'], NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const all = !rc.days.length, ut = rc.on && rc.smart ? usualTime() : null;
+  let when = '';
+  if(rc.on && rc.smart){
+    when = ut.h >= 0 ? 'You usually open WatchLater+ around <b>'+hourName(ut.h)+'</b>, so the reminder comes then.'
+      : 'Still learning when you usually open the app ('+Math.min(ut.n,5)+' of 5 opens). Until then it uses '+hourName(rc.h)+'.';
+  }
+  return '<div class="card"><h4>Reminder</h4><div class="line"><div class="grow"><b>Remind me</b></div>'
+    + '<div class="seg">'+seg('remind','on','On',rc.on)+seg('remind','off','Off',!rc.on)+'</div></div>'
+    + (rc.on ? '<div class="seg" style="margin-top:12px">'+seg('remind-mode','smart','When I usually open it',rc.smart)+seg('remind-mode','time','At a set time',!rc.smart)+'</div>'
+        + (rc.smart ? '<p class="small">'+when+'</p>' : '<input class="field" id="f-time" type="time" value="'+two(rc.h)+':'+two(rc.m)+'" aria-label="Reminder time">')
+        + '<span class="lbl" style="margin-top:14px">Which days</span><div class="days">'
+        + DAYS.map((d,i) => '<button data-act="remind-day" data-k="'+i+'" class="'+(all || rc.days.includes(i) ? 'on' : '')+'" aria-label="'+NAMES[i]+'">'+d+'</button>').join('') + '</div>'
+        + '<p class="small">'+(all ? 'Every day.' : 'Only on '+rc.days.slice().sort().map(i => NAMES[i]).join(', ')+'. Handy for your days off.')+'</p>'
+        + '<button class="btn ghost" data-act="test-remind">Send a test reminder now</button>'
+      : '<p class="small">A notification with the videos you have not watched yet, at the time you usually open the app or a time you pick.</p>')
+    + '</div>';
+}
+function widgetCard(){
+  return '<div class="card"><h4>Home screen widget</h4><p class="small" style="margin-top:0">See how many videos are waiting and tap the next one to watch it, right from your Home screen.</p>'
+    + '<button class="btn" data-act="add-widget" style="margin-top:12px">Add the widget</button>'
+    + '<p class="small">Or press and hold an empty spot on your Home screen, tap <b>Widgets</b> and find <b>WatchLater+</b>.</p></div>';
 }
 
 /* ---------- sheets ---------- */
@@ -1101,8 +1162,23 @@ document.addEventListener('click', e => {
     case 'remind': {
       const on = el.dataset.k==='on';
       if(on && !N){ toast('Reminders work in the phone app'); break; }
-      mutate(d => { const r = remindCfg(); d.settings.remind = {on, h:r.h, m:r.m}; });
-      try{ if(N) N.remindersChanged(on); }catch(err){}
+      setRemind(r => { r.on = on; if(on && data.settings.remind===undefined) r.smart = true; }, on);
+      break;
+    }
+    case 'remind-mode': setRemind(r => { r.smart = el.dataset.k==='smart'; }); break;
+    case 'remind-day': {
+      const d = Number(el.dataset.k);
+      setRemind(r => {
+        let days = r.days.length ? r.days.slice() : [0,1,2,3,4,5,6];
+        days = days.includes(d) ? days.filter(x => x!==d) : days.concat(d);
+        if(!days.length){ toast('Keep at least one day'); return; }
+        r.days = days.length===7 ? [] : days.sort();
+      });
+      break;
+    }
+    case 'add-widget': {
+      let ok = false; try{ ok = !!(N && N.addWidget && N.addWidget()); }catch(err){}
+      toast(ok ? 'Confirm on the next screen to add it' : 'Press and hold your Home screen, tap Widgets, then WatchLater+');
       break;
     }
     case 'test-remind': try{ if(N) N.testReminder(); }catch(err){} break;
@@ -1217,8 +1293,7 @@ document.addEventListener('change', e => {
   }
   if(t.id==='f-time'){
     const m = String(t.value).match(/^(\d{1,2}):(\d{2})/); if(!m) return;
-    mutate(d => { d.settings.remind = {on:true, h:Math.min(23, +m[1]), m:Math.min(59, +m[2])}; });
-    try{ if(N) N.remindersChanged(true); }catch(err){}
+    setRemind(r => { r.on = true; r.h = Math.min(23, +m[1]); r.m = Math.min(59, +m[2]); });
     toast('Reminder set');
   }
 });
@@ -1456,13 +1531,14 @@ function restoreFrom(text){
 if(!N) document.addEventListener('visibilitychange', () => {
   if(document.hidden) return;
   if(askArmed) askWatched();
+  webHabitOpen();
   fetchPreviews(); inboxCheck(false);
 });
 if(!N) window.addEventListener('online', () => { fetchPreviews(); inboxCheck(false); });
 render();
 incoming();
 fetchPreviews();
-if(WEB){ prunePreviews(); hydrateThumbs(); inboxCheck(false); }
+if(WEB){ prunePreviews(); hydrateThumbs(); inboxCheck(false); webHabitOpen(); }
 /* While the app is open on screen, collect links shared from the iPhone Share menu every 10 seconds. */
 if(WEB) setInterval(() => { if(document.visibilityState==='visible' && inboxCode()) inboxCheck(false); }, 10000);
 </script>

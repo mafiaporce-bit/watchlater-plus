@@ -347,6 +347,7 @@ public final class Previews {
             }
         }
 
+        if (thumb || !info.title.isEmpty()) WatchWidget.refreshSoon(c);
         if (once != null) once.onPreview(id, info.title, info.desc);
         Listener app = appListener;
         if (app != null) app.onPreview(id, info.title, info.desc);

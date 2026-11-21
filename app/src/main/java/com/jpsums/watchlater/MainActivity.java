@@ -145,6 +145,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // learn when you usually open the app (for the smart reminder), on a background thread
+        final android.content.Context app = getApplicationContext();
+        new Thread(() -> {
+            Habits.recordOpen(app);
+            Reminders.schedule(app);
+        }).start();
         if (bubbleAfterAllow) {
             // back from the phone's "Appear on top" screen
             bubbleAfterAllow = false;
@@ -236,6 +242,22 @@ public class MainActivity extends Activity {
         /* ----- Part 2 ----- */
 
         /** Titles and thumbnails fetched so far, as JSON keyed by video id. */
+        /** For the reminder settings: the hour you usually open the app (-1 = still learning) and how many opens it has seen. */
+        @JavascriptInterface
+        public String usualTime() {
+            try {
+                return new JSONObject().put("h", Habits.usualHour(MainActivity.this)).put("n", Habits.opens(MainActivity.this)).toString();
+            } catch (JSONException e) {
+                return "{}";
+            }
+        }
+
+        /** Asks the phone to put the WatchLater+ widget on the Home screen. */
+        @JavascriptInterface
+        public boolean addWidget() {
+            return WatchWidget.askToPin(MainActivity.this);
+        }
+
         @JavascriptInterface
         public String appIcons() {
             try {

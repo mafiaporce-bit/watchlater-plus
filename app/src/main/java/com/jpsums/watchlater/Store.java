@@ -79,7 +79,10 @@ public final class Store {
             } finally {
                 out.close();
             }
-            if (tmp.renameTo(dst)) return true;
+            if (tmp.renameTo(dst)) {
+                WatchWidget.refreshSoon(c);
+                return true;
+            }
             // rename can fail on some phones: write straight to the file instead
             FileOutputStream direct = new FileOutputStream(dst);
             try {
@@ -87,6 +90,7 @@ public final class Store {
             } finally {
                 direct.close();
             }
+            WatchWidget.refreshSoon(c);
             return true;
         } catch (IOException e) {
             return false;

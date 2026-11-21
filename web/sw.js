@@ -1,5 +1,5 @@
 /* WatchLater+ web: keeps the app on the phone so it opens with no internet. */
-const VERSION = 'wl-6613f2d689';
+const VERSION = 'wl-56ba6ba8bc';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png',
   './icon-maskable-512.png', './apple-touch-icon.png'];
 const PICS = 'wl-pics';          // YouTube thumbnails seen before, so they show offline too
